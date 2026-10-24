@@ -3,10 +3,6 @@
 
 package edge
 
-import (
-	"golang.org/x/sys/windows"
-)
-
 // ICoreWebView2NewWindowRequestedEventArgs
 type iCoreWebView2NewWindowRequestedEventArgsVtbl struct {
 	_IUnknownVtbl
