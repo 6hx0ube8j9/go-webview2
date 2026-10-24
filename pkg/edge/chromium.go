@@ -49,17 +49,6 @@ type Chromium struct {
 
 func NewChromium() *Chromium {
 	e := &Chromium{}
-	/*
-	 All these handlers are passed to native code through syscalls with 'uintptr(unsafe.Pointer(handler))' and we know
-	 that a pointer to those will be kept in the native code. Furthermore these handlers als contain pointer to other Go
-	 structs like the vtable.
-	 This violates the unsafe.Pointer rule '(4) Conversion of a Pointer to a uintptr when calling syscall.Syscall.' because
-	 theres no guarantee that Go doesn't move these objects.
-	 AFAIK currently the Go runtime doesn't move HEAP objects, so we should be safe with these handlers. But they don't
-	 guarantee it, because in the future Go might use a compacting GC.
-	 There's a proposal to add a runtime.Pin function, to prevent moving pinned objects, which would allow to easily fix
-	 this issue by just pinning the handlers. The https://go-review.googlesource.com/c/go/+/367296/ should land in Go 1.19.
-	*/
 	e.envCompleted = newICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler(e)
 	e.controllerCompleted = newICoreWebView2CreateCoreWebView2ControllerCompletedHandler(e)
 	e.webMessageReceived = newICoreWebView2WebMessageReceivedEventHandler(e)
@@ -67,7 +56,7 @@ func NewChromium() *Chromium {
 	e.webResourceRequested = newICoreWebView2WebResourceRequestedEventHandler(e)
 	e.acceleratorKeyPressed = newICoreWebView2AcceleratorKeyPressedEventHandler(e)
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
-	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e) 
+	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e)
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -81,7 +70,6 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		currentExePath := make([]uint16, windows.MAX_PATH)
 		_, err := windows.GetModuleFileName(windows.Handle(0), &currentExePath[0], windows.MAX_PATH)
 		if err != nil {
-			// What to do here?
 			return false
 		}
 		currentExeName := filepath.Base(windows.UTF16ToString(currentExePath))
@@ -173,7 +161,7 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 || env == nil {  
+	if int64(res) < 0 || env == nil {
 		log.Printf("Creating environment failed with %08x", res)
 		return 0
 	}
@@ -189,8 +177,10 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating controller failed with %08x", res)
+	if int64(res) < 0 || controller == nil {
+		log.Printf("Creating controller failed with %08x", res)
+		atomic.StoreUintptr(&e.inited, 1)
+		return 0
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
@@ -223,12 +213,15 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.navigationCompleted)),
 		uintptr(unsafe.Pointer(&token)),
 	)
-	
-	_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call(
-		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(e.newWindowRequested)),
-		uintptr(unsafe.Pointer(&token)),
-	)
+
+	if e.webview != nil && e.webview.vtbl != nil && e.newWindowRequested != nil {
+		_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call(
+			uintptr(unsafe.Pointer(e.webview)),
+			uintptr(unsafe.Pointer(e.newWindowRequested)),
+			uintptr(unsafe.Pointer(&token)),
+		)
+	}
+
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
 	atomic.StoreUintptr(&e.inited, 1)
@@ -310,9 +303,6 @@ func (e *Chromium) Environment() *ICoreWebView2Environment {
 	return e.environment
 }
 
-// AcceleratorKeyPressed is called when an accelerator key is pressed.
-// If the AcceleratorKeyCallback method has been set, it will defer handling of the keypress
-// to the callback. That callback returns a bool indicating if the event was handled.
 func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *ICoreWebView2AcceleratorKeyPressedEventArgs) uintptr {
 	if e.AcceleratorKeyCallback == nil {
 		return 0
@@ -354,8 +344,6 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 }
 
 func (e *Chromium) NotifyParentWindowPositionChanged() error {
-	//It looks like the wndproc function is called before the controller initialization is complete.
-	//Because of this the controller is nil
 	if e.controller == nil {
 		return nil
 	}
@@ -371,17 +359,21 @@ func (e *Chromium) Focus() {
 }
 
 func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr {
+	if args == nil || args.vtbl == nil {
+		return 0
+	}
+
 	_, _, _ = args.vtbl.PutHandled.Call(
 		uintptr(unsafe.Pointer(args)),
 		1,
 	)
 
 	var uri *uint16
-	_, _, _ = args.vtbl.GetURI.Call(
+	r, _, _ := args.vtbl.GetURI.Call(
 		uintptr(unsafe.Pointer(args)),
 		uintptr(unsafe.Pointer(&uri)),
 	)
-	if uri == nil {
+	if int32(r) < 0 || uri == nil {
 		return 0
 	}
 
@@ -394,4 +386,72 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2
 	}
 
 	return 0
+}
+
+type iCoreWebView2NewWindowRequestedEventArgsVtbl struct {
+	_IUnknownVtbl
+	GetURI             ComProc
+	PutNewWindow       ComProc
+	GetNewWindow       ComProc
+	PutHandled         ComProc
+	GetHandled         ComProc
+	GetIsUserInitiated ComProc
+	GetDeferral        ComProc
+	GetWindowFeatures  ComProc
+}
+
+type iCoreWebView2NewWindowRequestedEventArgs struct {
+	vtbl *iCoreWebView2NewWindowRequestedEventArgsVtbl
+}
+
+type iCoreWebView2NewWindowRequestedEventHandlerImpl interface {
+	_IUnknownImpl
+	NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr
+}
+
+type iCoreWebView2NewWindowRequestedEventHandlerVtbl struct {
+	_IUnknownVtbl
+	Invoke ComProc
+}
+
+type iCoreWebView2NewWindowRequestedEventHandler struct {
+	vtbl *iCoreWebView2NewWindowRequestedEventHandlerVtbl
+	impl iCoreWebView2NewWindowRequestedEventHandlerImpl
+}
+
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface(this *iCoreWebView2NewWindowRequestedEventHandler, refiid, object uintptr) uintptr {
+	if object == 0 {
+		return 0x80004003 // E_POINTER
+	}
+	*(*uintptr)(unsafe.Pointer(object)) = uintptr(unsafe.Pointer(this))
+	this.impl.AddRef()
+	return 0 // S_OK
+}
+
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
+	return this.impl.AddRef()
+}
+
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
+	return this.impl.Release()
+}
+
+func _ICoreWebView2NewWindowRequestedEventHandlerInvoke(this *iCoreWebView2NewWindowRequestedEventHandler, sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr {
+	return this.impl.NewWindowRequested(sender, args)
+}
+
+var iCoreWebView2NewWindowRequestedEventHandlerFn = iCoreWebView2NewWindowRequestedEventHandlerVtbl{
+	_IUnknownVtbl{
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface),
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef),
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease),
+	},
+	NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerInvoke),
+}
+
+func newICoreWebView2NewWindowRequestedEventHandler(impl iCoreWebView2NewWindowRequestedEventHandlerImpl) *iCoreWebView2NewWindowRequestedEventHandler {
+	return &iCoreWebView2NewWindowRequestedEventHandler{
+		vtbl: &iCoreWebView2NewWindowRequestedEventHandlerFn,
+		impl: impl,
+	}
 }
