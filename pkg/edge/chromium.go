@@ -394,4 +394,4 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2
 	}
 
 	return 0
-}}
+}
