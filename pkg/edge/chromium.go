@@ -6,9 +6,7 @@ package edge
 import (
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"unsafe"
 
@@ -29,7 +27,6 @@ type Chromium struct {
 	webResourceRequested  *iCoreWebView2WebResourceRequestedEventHandler
 	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
-	newWindowRequested    *iCoreWebView2NewWindowRequestedEventHandler
 
 	environment *ICoreWebView2Environment
 
@@ -56,7 +53,6 @@ func NewChromium() *Chromium {
 	e.webResourceRequested = newICoreWebView2WebResourceRequestedEventHandler(e)
 	e.acceleratorKeyPressed = newICoreWebView2AcceleratorKeyPressedEventHandler(e)
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
-	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e)
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -178,9 +174,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
 	if int64(res) < 0 || controller == nil {
-		log.Printf("Creating controller failed with %08x", res)
-		atomic.StoreUintptr(&e.inited, 1)
-		return 0
+		log.Fatalf("Creating controller failed with %08x", res)
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
@@ -213,14 +207,6 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.navigationCompleted)),
 		uintptr(unsafe.Pointer(&token)),
 	)
-
-	if e.webview != nil && e.webview.vtbl != nil && e.newWindowRequested != nil {
-		_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call(
-			uintptr(unsafe.Pointer(e.webview)),
-			uintptr(unsafe.Pointer(e.newWindowRequested)),
-			uintptr(unsafe.Pointer(&token)),
-		)
-	}
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
@@ -356,102 +342,4 @@ func (e *Chromium) Focus() {
 		return
 	}
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
-}
-
-func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr {
-	if args == nil || args.vtbl == nil {
-		return 0
-	}
-
-	_, _, _ = args.vtbl.PutHandled.Call(
-		uintptr(unsafe.Pointer(args)),
-		1,
-	)
-
-	var uri *uint16
-	r, _, _ := args.vtbl.GetURI.Call(
-		uintptr(unsafe.Pointer(args)),
-		uintptr(unsafe.Pointer(&uri)),
-	)
-	if int32(r) < 0 || uri == nil {
-		return 0
-	}
-
-	targetURL := w32.Utf16PtrToString(uri)
-	windows.CoTaskMemFree(unsafe.Pointer(uri))
-
-	targetURL = strings.TrimSpace(targetURL)
-	if strings.HasPrefix(targetURL, "http://") || strings.HasPrefix(targetURL, "https://") {
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL).Start()
-	}
-
-	return 0
-}
-
-type iCoreWebView2NewWindowRequestedEventArgsVtbl struct {
-	_IUnknownVtbl
-	GetURI             ComProc
-	PutNewWindow       ComProc
-	GetNewWindow       ComProc
-	PutHandled         ComProc
-	GetHandled         ComProc
-	GetIsUserInitiated ComProc
-	GetDeferral        ComProc
-	GetWindowFeatures  ComProc
-}
-
-type iCoreWebView2NewWindowRequestedEventArgs struct {
-	vtbl *iCoreWebView2NewWindowRequestedEventArgsVtbl
-}
-
-type iCoreWebView2NewWindowRequestedEventHandlerImpl interface {
-	_IUnknownImpl
-	NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr
-}
-
-type iCoreWebView2NewWindowRequestedEventHandlerVtbl struct {
-	_IUnknownVtbl
-	Invoke ComProc
-}
-
-type iCoreWebView2NewWindowRequestedEventHandler struct {
-	vtbl *iCoreWebView2NewWindowRequestedEventHandlerVtbl
-	impl iCoreWebView2NewWindowRequestedEventHandlerImpl
-}
-
-func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface(this *iCoreWebView2NewWindowRequestedEventHandler, refiid, object uintptr) uintptr {
-	if object == 0 {
-		return 0x80004003 // E_POINTER
-	}
-	*(*uintptr)(unsafe.Pointer(object)) = uintptr(unsafe.Pointer(this))
-	this.impl.AddRef()
-	return 0 // S_OK
-}
-
-func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
-	return this.impl.AddRef()
-}
-
-func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
-	return this.impl.Release()
-}
-
-func _ICoreWebView2NewWindowRequestedEventHandlerInvoke(this *iCoreWebView2NewWindowRequestedEventHandler, sender *ICoreWebView2, args *iCoreWebView2NewWindowRequestedEventArgs) uintptr {
-	return this.impl.NewWindowRequested(sender, args)
-}
-
-var iCoreWebView2NewWindowRequestedEventHandlerFn = iCoreWebView2NewWindowRequestedEventHandlerVtbl{
-	_IUnknownVtbl{
-		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface),
-		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef),
-		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease),
-	},
-	NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerInvoke),
-}
-
-func newICoreWebView2NewWindowRequestedEventHandler(impl iCoreWebView2NewWindowRequestedEventHandlerImpl) *iCoreWebView2NewWindowRequestedEventHandler {
-	return &iCoreWebView2NewWindowRequestedEventHandler{
-		vtbl: &iCoreWebView2NewWindowRequestedEventHandlerFn,
-		impl: impl,
-	}
 }
