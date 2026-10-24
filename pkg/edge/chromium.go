@@ -377,7 +377,7 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2
 	)
 
 	var uri *uint16
-	_, _, _ = args.vtbl.GetUri.Call(
+	_, _, _ = args.vtbl.GetURI.Call(
 		uintptr(unsafe.Pointer(args)),
 		uintptr(unsafe.Pointer(&uri)),
 	)
@@ -394,4 +394,4 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *iCoreWebView2
 	}
 
 	return 0
-}
+}}
