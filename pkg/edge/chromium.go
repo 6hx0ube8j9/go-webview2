@@ -12,8 +12,6 @@ import (
 
 	"github.com/jchv/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
-
 )
 
 type Chromium struct {
@@ -29,6 +27,7 @@ type Chromium struct {
 	webResourceRequested  *iCoreWebView2WebResourceRequestedEventHandler
 	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
+	newWindowRequested    *iCoreWebView2NewWindowRequestedEventHandler
 
 	environment *ICoreWebView2Environment
 
@@ -66,6 +65,7 @@ func NewChromium() *Chromium {
 	e.webResourceRequested = newICoreWebView2WebResourceRequestedEventHandler(e)
 	e.acceleratorKeyPressed = newICoreWebView2AcceleratorKeyPressedEventHandler(e)
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
+	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e)
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -171,9 +171,8 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int32(res) < 0 || env == nil {
-		log.Printf("Creating environment failed with %08x", res)
-		return 0
+	if int64(res) < 0 {
+		log.Fatalf("Creating environment failed with %08x", res)
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -193,19 +192,11 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
 
-	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
-	if IsSystemDarkTheme() {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
-	} else {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
-	}
-
 	var token _EventRegistrationToken
 	_, _, _ = controller.vtbl.GetCoreWebView2.Call(
 		uintptr(unsafe.Pointer(controller)),
 		uintptr(unsafe.Pointer(&e.webview)),
 	)
-	
 	_, _, _ = e.webview.vtbl.AddRef.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 	)
@@ -229,7 +220,12 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.navigationCompleted)),
 		uintptr(unsafe.Pointer(&token)),
 	)
-
+	
+	_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call(
+		uintptr(unsafe.Pointer(e.webview)),
+		uintptr(unsafe.Pointer(e.newWindowRequested)),
+		uintptr(unsafe.Pointer(&token)),
+	)
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
 	atomic.StoreUintptr(&e.inited, 1)
@@ -371,20 +367,13 @@ func (e *Chromium) Focus() {
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
 }
 
-func IsSystemDarkTheme() bool {
-	k, err := registry.OpenKey(
-		registry.CURRENT_USER,
-		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
-		registry.QUERY_VALUE,
-	)
-	if err != nil {
-		return false
+func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
+	uri, err := args.GetUri()
+	if err == nil && uri != "" {
+		_ = args.PutHandled(true)
+		openDefaultBrowser(uri)
 	}
-	defer k.Close()
-
-	val, _, err := k.GetIntegerValue("AppsUseLightTheme")
-	if err != nil {
-		return false
-	}
-	return val == 0
+	return 0
 }
+
+
