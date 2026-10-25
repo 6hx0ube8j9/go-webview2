@@ -13,11 +13,12 @@ import (
 )
 
 const (
+	gclpHbrBackground         = ^uintptr(9) // GCLP_HBRBACKGROUND (-10)
 	dwmwaImmersiveDarkMode    = 20
 	dwmwaImmersiveDarkModeOld = 19
 
-	DarkThemeColor  uint32 = 0x00202020
-	LightThemeColor uint32 = 0x00FFFFFF
+	DarkThemeColor  uint32 = 0x00202020 // BGR: #202020
+	LightThemeColor uint32 = 0x00FFFFFF // BGR: #FFFFFF
 )
 
 var (
@@ -30,11 +31,15 @@ var (
 	procGetClientRect         = moduser32.NewProc("GetClientRect")
 	procFillRect              = moduser32.NewProc("FillRect")
 	procInvalidateRect        = moduser32.NewProc("InvalidateRect")
+	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
 )
 
 var isDarkCache int32
 
 func init() {
+	if err := procSetClassLongPtrW.Find(); err != nil {
+		procSetClassLongPtrW = moduser32.NewProc("SetClassLongW")
+	}
 	RefreshSystemThemeCache()
 }
 
@@ -76,6 +81,14 @@ func CreateThemeBrush() uintptr {
 	return brush
 }
 
+func UpdateWindowClassBrush(hwnd uintptr) {
+	newBrush := CreateThemeBrush()
+	oldBrush, _, _ := procSetClassLongPtrW.Call(hwnd, gclpHbrBackground, newBrush)
+	if oldBrush != 0 && oldBrush != newBrush {
+		_, _, _ = procDeleteObject.Call(oldBrush)
+	}
+}
+
 func SetWindowDarkMode(hwnd uintptr, isDark bool) {
 	var darkMode int32
 	if isDark {
@@ -110,5 +123,6 @@ func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 func HandleThemeChange(hwnd uintptr) {
 	isDark := RefreshSystemThemeCache()
 	SetWindowDarkMode(hwnd, isDark)
+	UpdateWindowClassBrush(hwnd)
 	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
