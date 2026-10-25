@@ -333,14 +333,13 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	)
 	setWindowContext(w.hwnd, w)
 
-	//_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
-	//_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-	//_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
+	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	if !w.browser.Embed(w.hwnd) {
 		return false
 	}
-	
 	w.browser.Resize()
 	return true
 }
