@@ -81,7 +81,7 @@ func SetWindowDarkMode(hwnd uintptr, isDark bool) {
 	}
 }
 
-func EraseWindowBackground(hwnd uintptr) {
+func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 	var rc w32.Rect
 	_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 
@@ -90,4 +90,5 @@ func EraseWindowBackground(hwnd uintptr) {
 		brush = CreateThemeBrush(false)
 		defer procDeleteObject.Call(brush)
 	}
+	_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
 }
