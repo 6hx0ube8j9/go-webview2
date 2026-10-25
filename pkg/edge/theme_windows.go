@@ -28,6 +28,7 @@ var (
 	moduser32                 = windows.NewLazySystemDLL("user32.dll")
 	procGetClientRect         = moduser32.NewProc("GetClientRect")
 	procFillRect              = moduser32.NewProc("FillRect")
+	procInvalidateRect        = moduser32.NewProc("InvalidateRect")
 	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
 	procGetClassLongPtrW      = moduser32.NewProc("GetClassLongPtrW")
 )
@@ -91,4 +92,8 @@ func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 		defer procDeleteObject.Call(brush)
 	}
 	_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
+}
+
+func InvalidateWindow(hwnd uintptr) {
+	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
