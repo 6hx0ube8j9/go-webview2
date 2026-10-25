@@ -19,6 +19,7 @@ type Chromium struct {
 	focusOnInit           bool
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
+	DarkMode              bool  
 	inited                uintptr
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
@@ -193,7 +194,7 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	e.controller = controller
 
 	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
-	if IsSystemDarkTheme() {
+	if e.DarkMode {
 		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
 	} else {
 		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
