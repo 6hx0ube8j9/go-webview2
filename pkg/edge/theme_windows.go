@@ -1,7 +1,7 @@
 //go:build windows
 // +build windows
 
-package webview2
+package edge
 
 import (
 	"sync/atomic"
@@ -13,15 +13,11 @@ import (
 )
 
 const (
-	wmEraseBkgnd    = 0x0014
-	wmSettingChange = 0x001A
-	wmThemeChanged  = 0x031A
-
 	dwmwaImmersiveDarkMode    = 20
 	dwmwaImmersiveDarkModeOld = 19
 
-	darkThemeColor  uint32 = 0x00202020 // BGR: #202020
-	lightThemeColor uint32 = 0x00FFFFFF // BGR: #FFFFFF
+	DarkThemeColor  uint32 = 0x00202020
+	LightThemeColor uint32 = 0x00FFFFFF
 )
 
 var (
@@ -39,11 +35,10 @@ var (
 var isDarkCache int32
 
 func init() {
-	refreshSystemThemeCache()
+	RefreshSystemThemeCache()
 }
 
-// refreshSystemThemeCache 读取注册表并刷新内存缓存
-func refreshSystemThemeCache() bool {
+func RefreshSystemThemeCache() bool {
 	k, err := registry.OpenKey(
 		registry.CURRENT_USER,
 		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
@@ -65,12 +60,23 @@ func refreshSystemThemeCache() bool {
 	return true
 }
 
-func isSystemDarkTheme() bool {
+func IsSystemDarkTheme() bool {
 	return atomic.LoadInt32(&isDarkCache) == 1
 }
 
-// applyWindowDarkMode 设置窗口标题栏的沉浸式深色模式
-func applyWindowDarkMode(hwnd uintptr, isDark bool) {
+func GetThemeColor() uint32 {
+	if IsSystemDarkTheme() {
+		return DarkThemeColor
+	}
+	return LightThemeColor
+}
+
+func CreateThemeBrush() uintptr {
+	brush, _, _ := procCreateSolidBrush.Call(uintptr(GetThemeColor()))
+	return brush
+}
+
+func SetWindowDarkMode(hwnd uintptr, isDark bool) {
 	var darkMode int32
 	if isDark {
 		darkMode = 1
@@ -92,24 +98,17 @@ func applyWindowDarkMode(hwnd uintptr, isDark bool) {
 	}
 }
 
-// eraseWindowBackground 纯内存无闪烁填充客户区背景
-func eraseWindowBackground(hwnd uintptr, hdc uintptr) {
+func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 	var rc w32.Rect
 	_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 
-	color := lightThemeColor
-	if isSystemDarkTheme() {
-		color = darkThemeColor
-	}
-
-	brush, _, _ := procCreateSolidBrush.Call(uintptr(color))
+	brush := CreateThemeBrush()
 	_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
 	_, _, _ = procDeleteObject.Call(brush)
 }
 
-// handleThemeChange 系统主题变更时的响应处理
-func handleThemeChange(hwnd uintptr) {
-	isDark := refreshSystemThemeCache()
-	applyWindowDarkMode(hwnd, isDark)
+func HandleThemeChange(hwnd uintptr) {
+	isDark := RefreshSystemThemeCache()
+	SetWindowDarkMode(hwnd, isDark)
 	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
