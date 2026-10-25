@@ -225,10 +225,12 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 		case 0x0014: // WM_ERASEBKGND
 			edge.EraseWindowBackground(hwnd, wp)
 			return 1
+
 		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
 			edge.HandleThemeChange(hwnd)
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
+
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
 		case w32.WMNCLButtonDown:
@@ -274,6 +276,9 @@ func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
 }
 
 func (w *webview) CreateWithOptions(opts WindowOptions) bool {
+	edge.RefreshSystemThemeCache()
+	isDark := edge.IsSystemDarkTheme()
+
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
 
@@ -288,6 +293,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
 	}
 
+	hbrBackground := edge.CreateThemeBrush()
 	className, _ := windows.UTF16PtrFromString("webview")
 	wc := w32.WndClassExW{
 		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
@@ -295,6 +301,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		LpszClassName: className,
 		HIcon:         windows.Handle(icon),
 		HIconSm:       windows.Handle(icon),
+		HbrBackground: windows.Handle(hbrBackground),
 		LpfnWndProc:   windows.NewCallback(wndproc),
 	}
 	_, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
@@ -340,7 +347,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	)
 	setWindowContext(w.hwnd, w)
 
-	edge.SetWindowDarkMode(w.hwnd, edge.IsSystemDarkTheme())
+	edge.UpdateWindowClassBrush(w.hwnd)
+
+	edge.SetWindowDarkMode(w.hwnd, isDark)
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
