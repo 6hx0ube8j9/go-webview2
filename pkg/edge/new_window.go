@@ -27,9 +27,11 @@ func openDefaultBrowser(targetURL string) {
 	)
 }
 
-type _ICoreWebView2NewWindowRequestedEventArgsVtbl struct {
+// ==================== ICoreWebView2NewWindowRequestedEventArgs ====================
+
+type iCoreWebView2NewWindowRequestedEventArgsVtbl struct {
 	_IUnknownVtbl
-	GetUri             ComProc
+	GetURI             ComProc
 	PutNewWindow       ComProc
 	GetNewWindow       ComProc
 	PutHandled         ComProc
@@ -40,12 +42,12 @@ type _ICoreWebView2NewWindowRequestedEventArgsVtbl struct {
 }
 
 type ICoreWebView2NewWindowRequestedEventArgs struct {
-	vtbl *_ICoreWebView2NewWindowRequestedEventArgsVtbl
+	vtbl *iCoreWebView2NewWindowRequestedEventArgsVtbl
 }
 
 func (i *ICoreWebView2NewWindowRequestedEventArgs) GetUri() (string, error) {
 	var uri *uint16
-	_, _, err := i.vtbl.GetUri.Call(
+	_, _, err := i.vtbl.GetURI.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(unsafe.Pointer(&uri)),
 	)
@@ -71,44 +73,50 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) erro
 	return nil
 }
 
-type _iCoreWebView2NewWindowRequestedEventHandlerVtbl struct {
-	QueryInterface ComProc
-	AddRef         ComProc
-	Release        ComProc
-	Invoke         ComProc
+// ==================== ICoreWebView2NewWindowRequestedEventHandler ====================
+
+type iCoreWebView2NewWindowRequestedEventHandlerImpl interface {
+	NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr
+}
+
+type iCoreWebView2NewWindowRequestedEventHandlerVtbl struct {
+	_IUnknownVtbl
+	Invoke ComProc
 }
 
 type iCoreWebView2NewWindowRequestedEventHandler struct {
-	vtbl *_iCoreWebView2NewWindowRequestedEventHandlerVtbl
-	impl *Chromium
+	vtbl *iCoreWebView2NewWindowRequestedEventHandlerVtbl
+	impl iCoreWebView2NewWindowRequestedEventHandlerImpl
 }
 
-func _iCoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface(this *iCoreWebView2NewWindowRequestedEventHandler, refiid, object uintptr) uintptr {
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface(this *iCoreWebView2NewWindowRequestedEventHandler, refiid, object uintptr) uintptr {
 	return 0
 }
 
-func _iCoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
 	return 1
 }
 
-func _iCoreWebView2NewWindowRequestedEventHandlerIUnknownRelease(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
+func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
 	return 1
 }
 
-func _iCoreWebView2NewWindowRequestedEventHandlerInvoke(this *iCoreWebView2NewWindowRequestedEventHandler, sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
+func _ICoreWebView2NewWindowRequestedEventHandlerInvoke(this *iCoreWebView2NewWindowRequestedEventHandler, sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
 	return this.impl.NewWindowRequested(sender, args)
 }
 
-var _iCoreWebView2NewWindowRequestedEventHandlerFn = _iCoreWebView2NewWindowRequestedEventHandlerVtbl{
-	NewComProc(_iCoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface),
-	NewComProc(_iCoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef),
-	NewComProc(_iCoreWebView2NewWindowRequestedEventHandlerIUnknownRelease),
-	NewComProc(_iCoreWebView2NewWindowRequestedEventHandlerInvoke),
+var iCoreWebView2NewWindowRequestedEventHandlerFn = iCoreWebView2NewWindowRequestedEventHandlerVtbl{
+	_IUnknownVtbl{
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface),
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef),
+		NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease),
+	},
+	NewComProc(_ICoreWebView2NewWindowRequestedEventHandlerInvoke),
 }
 
-func newICoreWebView2NewWindowRequestedEventHandler(impl *Chromium) *iCoreWebView2NewWindowRequestedEventHandler {
+func newICoreWebView2NewWindowRequestedEventHandler(impl iCoreWebView2NewWindowRequestedEventHandlerImpl) *iCoreWebView2NewWindowRequestedEventHandler {
 	return &iCoreWebView2NewWindowRequestedEventHandler{
-		vtbl: &_iCoreWebView2NewWindowRequestedEventHandlerFn,
+		vtbl: &iCoreWebView2NewWindowRequestedEventHandlerFn,
 		impl: impl,
 	}
 }
