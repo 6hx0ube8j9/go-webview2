@@ -12,6 +12,8 @@ import (
 
 	"github.com/jchv/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+
 )
 
 type Chromium struct {
