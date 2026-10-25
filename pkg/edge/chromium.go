@@ -385,4 +385,14 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 	return 0
 }
 
-
+func (e *Chromium) SetBackgroundColor(isDark bool) {
+	if e.controller == nil {
+		return
+	}
+	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(e.controller))
+	if isDark {
+		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
+	} else {
+		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
+	}
+}
