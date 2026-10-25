@@ -84,6 +84,8 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
 	}
 
+	setWebView2BackgroundForSystemTheme()
+
 	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), 0, e.envCompleted)
 	if err != nil {
 		log.Printf("Error calling Webview2Loader: %v", err)
@@ -222,37 +224,6 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
-	iidController2 := NewGUID("{c979903e-d4ca-4228-92eb-47ee3fa96eab}")
-	if iidController2 != nil {
-		var controller2 *ICoreWebView2Controller2
-		hr, _, _ := controller.vtbl.QueryInterface.Call(
-			uintptr(unsafe.Pointer(controller)),
-			uintptr(unsafe.Pointer(iidController2)),
-			uintptr(unsafe.Pointer(&controller2)),
-		)
-		if hr == 0 && controller2 != nil {
-			isDark := false
-			var k windows.Handle
-			if windows.RegOpenKeyEx(windows.HKEY_CURRENT_USER, windows.StringToUTF16Ptr(`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`), 0, windows.KEY_READ, &k) == nil {
-				var val uint32
-				var size uint32 = 4
-				if windows.RegQueryValueEx(k, windows.StringToUTF16Ptr("AppsUseLightTheme"), nil, nil, (*byte)(unsafe.Pointer(&val)), &size) == nil {
-					isDark = (val == 0)
-				}
-				_ = windows.RegCloseKey(k)
-			}
-
-			var bg COREWEBVIEW2_COLOR
-			if isDark {
-				bg = COREWEBVIEW2_COLOR{A: 255, R: 0x18, G: 0x18, B: 0x18}
-			} else {
-				bg = COREWEBVIEW2_COLOR{A: 255, R: 0xFF, G: 0xFF, B: 0xFF}
-			}
-			_ = controller2.PutDefaultBackgroundColor(bg)
-			_, _, _ = controller2.vtbl.Release.Call(uintptr(unsafe.Pointer(controller2)))
-		}
-	}
-	atomic.StoreUintptr(&e.inited, 1)
 	atomic.StoreUintptr(&e.inited, 1)
 
 	if e.focusOnInit {
@@ -391,3 +362,29 @@ func (e *Chromium) Focus() {
 	}
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
 }
+
+func setWebView2BackgroundForSystemTheme() {
+    key, err := registry.OpenKey(
+        registry.CURRENT_USER,
+        `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
+        registry.QUERY_VALUE,
+    )
+    if err != nil {
+        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
+        return
+    }
+    defer key.Close()
+
+    value, _, err := key.GetIntegerValue("AppsUseLightTheme")
+    if err != nil {
+        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
+        return
+    }
+
+    if value == 0 {
+        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF202020")
+    } else {
+        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
+    }
+}
+
