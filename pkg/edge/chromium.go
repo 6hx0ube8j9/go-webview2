@@ -86,8 +86,6 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
 	}
 
-	setWebView2BackgroundForSystemTheme()
-
 	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), 0, e.envCompleted)
 	if err != nil {
 		log.Printf("Error calling Webview2Loader: %v", err)
@@ -189,17 +187,25 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int32(res) < 0 || controller == nil {
+	if int64(res) < 0 {
 		log.Fatalf("Creating controller failed with %08x", res)
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
+
+	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
+	if IsSystemDarkTheme() {
+		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
+	} else {
+		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
+	}
 
 	var token _EventRegistrationToken
 	_, _, _ = controller.vtbl.GetCoreWebView2.Call(
 		uintptr(unsafe.Pointer(controller)),
 		uintptr(unsafe.Pointer(&e.webview)),
 	)
+	
 	_, _, _ = e.webview.vtbl.AddRef.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 	)
@@ -365,28 +371,20 @@ func (e *Chromium) Focus() {
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
 }
 
-func setWebView2BackgroundForSystemTheme() {
-    key, err := registry.OpenKey(
-        registry.CURRENT_USER,
-        `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
-        registry.QUERY_VALUE,
-    )
-    if err != nil {
-        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
-        return
-    }
-    defer key.Close()
+func IsSystemDarkTheme() bool {
+	k, err := registry.OpenKey(
+		registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
+		registry.QUERY_VALUE,
+	)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
 
-    value, _, err := key.GetIntegerValue("AppsUseLightTheme")
-    if err != nil {
-        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
-        return
-    }
-
-    if value == 0 {
-        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF202020")
-    } else {
-        _ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FFFFFFFF")
-    }
+	val, _, err := k.GetIntegerValue("AppsUseLightTheme")
+	if err != nil {
+		return false
+	}
+	return val == 0
 }
-
