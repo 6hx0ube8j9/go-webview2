@@ -366,7 +366,7 @@ func (w *webview) SetDarkMode(isDark bool) {
 			browser.SetBackgroundColor(isDark)
 		}
 		
-		_, _, _ = w32.User32InvalidateRect.Call(w.hwnd, 0, 1)
+		edge.InvalidateWindow(w.hwnd) 
 	})
 }
 
