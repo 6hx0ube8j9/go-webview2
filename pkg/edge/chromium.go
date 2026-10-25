@@ -16,6 +16,7 @@ import (
 
 type Chromium struct {
 	hwnd                  uintptr
+	focusOnInit           bool
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
 	inited                uintptr
@@ -45,6 +46,17 @@ type Chromium struct {
 
 func NewChromium() *Chromium {
 	e := &Chromium{}
+	/*
+	 All these handlers are passed to native code through syscalls with 'uintptr(unsafe.Pointer(handler))' and we know
+	 that a pointer to those will be kept in the native code. Furthermore these handlers als contain pointer to other Go
+	 structs like the vtable.
+	 This violates the unsafe.Pointer rule '(4) Conversion of a Pointer to a uintptr when calling syscall.Syscall.' because
+	 theres no guarantee that Go doesn't move these objects.
+	 AFAIK currently the Go runtime doesn't move HEAP objects, so we should be safe with these handlers. But they don't
+	 guarantee it, because in the future Go might use a compacting GC.
+	 There's a proposal to add a runtime.Pin function, to prevent moving pinned objects, which would allow to easily fix
+	 this issue by just pinning the handlers. The https://go-review.googlesource.com/c/go/+/367296/ should land in Go 1.19.
+	*/
 	e.envCompleted = newICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler(e)
 	e.controllerCompleted = newICoreWebView2CreateCoreWebView2ControllerCompletedHandler(e)
 	e.webMessageReceived = newICoreWebView2WebMessageReceivedEventHandler(e)
@@ -65,6 +77,7 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		currentExePath := make([]uint16, windows.MAX_PATH)
 		_, err := windows.GetModuleFileName(windows.Handle(0), &currentExePath[0], windows.MAX_PATH)
 		if err != nil {
+			// What to do here?
 			return false
 		}
 		currentExeName := filepath.Base(windows.UTF16ToString(currentExePath))
@@ -156,9 +169,8 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 || env == nil {
-		log.Printf("Creating environment failed with %08x", res)
-		return 0
+	if int64(res) < 0 {
+		log.Fatalf("Creating environment failed with %08x", res)
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -172,7 +184,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 || controller == nil {
+	if int64(res) < 0 {
 		log.Fatalf("Creating controller failed with %08x", res)
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
@@ -210,6 +222,10 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
 	atomic.StoreUintptr(&e.inited, 1)
+
+	if e.focusOnInit {
+		e.Focus()
+	}
 
 	return 0
 }
@@ -284,6 +300,9 @@ func (e *Chromium) Environment() *ICoreWebView2Environment {
 	return e.environment
 }
 
+// AcceleratorKeyPressed is called when an accelerator key is pressed.
+// If the AcceleratorKeyCallback method has been set, it will defer handling of the keypress
+// to the callback. That callback returns a bool indicating if the event was handled.
 func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *ICoreWebView2AcceleratorKeyPressedEventArgs) uintptr {
 	if e.AcceleratorKeyCallback == nil {
 		return 0
@@ -325,6 +344,8 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 }
 
 func (e *Chromium) NotifyParentWindowPositionChanged() error {
+	//It looks like the wndproc function is called before the controller initialization is complete.
+	//Because of this the controller is nil
 	if e.controller == nil {
 		return nil
 	}
@@ -333,7 +354,8 @@ func (e *Chromium) NotifyParentWindowPositionChanged() error {
 
 func (e *Chromium) Focus() {
 	if e.controller == nil {
-		return 
+		e.focusOnInit = true
+		return
 	}
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
 }
