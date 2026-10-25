@@ -1,6 +1,3 @@
-//go:build windows
-// +build windows
-
 package edge
 
 import (
@@ -34,7 +31,10 @@ var (
 	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
 )
 
-var isDarkCache int32
+var (
+	isDarkCache int32
+	currentClassColor uint32 = 0xFFFFFFFF 
+)
 
 func init() {
 	if err := procSetClassLongPtrW.Find(); err != nil {
@@ -43,54 +43,63 @@ func init() {
 	RefreshSystemThemeCache()
 }
 
-func RefreshSystemThemeCache() bool {
+func RefreshSystemThemeCache() (isDark bool, changed bool) {
 	k, err := registry.OpenKey(
 		registry.CURRENT_USER,
 		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
 		registry.QUERY_VALUE,
 	)
-	if err != nil {
-		atomic.StoreInt32(&isDarkCache, 0)
-		return false
-	}
-	defer k.Close()
-
-	val, _, err := k.GetIntegerValue("AppsUseLightTheme")
-	if err != nil || val != 0 {
-		atomic.StoreInt32(&isDarkCache, 0)
-		return false
+	newDark := false
+	if err == nil {
+		val, _, errVal := k.GetIntegerValue("AppsUseLightTheme")
+		k.Close()
+		if errVal == nil && val == 0 {
+			newDark = true
+		}
 	}
 
-	atomic.StoreInt32(&isDarkCache, 1)
-	return true
+	oldDark := atomic.LoadInt32(&isDarkCache) == 1
+	var newVal int32 = 0
+	if newDark {
+		newVal = 1
+	}
+
+	atomic.StoreInt32(&isDarkCache, newVal)
+	return newDark, oldDark != newDark
 }
 
 func IsSystemDarkTheme() bool {
 	return atomic.LoadInt32(&isDarkCache) == 1
 }
 
-func GetThemeColor() uint32 {
-	if IsSystemDarkTheme() {
+func GetThemeColor(isDark bool) uint32 {
+	if isDark {
 		return DarkThemeColor
 	}
 	return LightThemeColor
 }
 
-func CreateThemeBrush() uintptr {
-	brush, _, _ := procCreateSolidBrush.Call(uintptr(GetThemeColor()))
+func CreateThemeBrush(isDark bool) uintptr {
+	brush, _, _ := procCreateSolidBrush.Call(uintptr(GetThemeColor(isDark)))
 	return brush
 }
 
-func UpdateWindowClassBrush(hwnd uintptr) {
-	newBrush := CreateThemeBrush()
+func SyncWindowClassBrush(hwnd uintptr, isDark bool) {
+	targetColor := GetThemeColor(isDark)
+	if currentClassColor == targetColor {
+		return
+	}
+
+	newBrush := CreateThemeBrush(isDark)
 	oldBrush, _, _ := procSetClassLongPtrW.Call(hwnd, gclpHbrBackground, newBrush)
 	if oldBrush != 0 && oldBrush != newBrush {
 		_, _, _ = procDeleteObject.Call(oldBrush)
 	}
+	currentClassColor = targetColor
 }
 
 func SetWindowDarkMode(hwnd uintptr, isDark bool) {
-	var darkMode int32
+	var darkMode int32 = 0
 	if isDark {
 		darkMode = 1
 	}
@@ -115,14 +124,14 @@ func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 	var rc w32.Rect
 	_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 
-	brush := CreateThemeBrush()
+	brush := CreateThemeBrush(IsSystemDarkTheme())
 	_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
 	_, _, _ = procDeleteObject.Call(brush)
 }
 
 func HandleThemeChange(hwnd uintptr) {
-	isDark := RefreshSystemThemeCache()
+	isDark, _ := RefreshSystemThemeCache()
 	SetWindowDarkMode(hwnd, isDark)
-	UpdateWindowClassBrush(hwnd)
+	SyncWindowClassBrush(hwnd, isDark)
 	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
