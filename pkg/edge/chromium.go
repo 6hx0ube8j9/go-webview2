@@ -12,7 +12,6 @@ import (
 
 	"github.com/jchv/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
 
 type Chromium struct {
@@ -373,25 +372,6 @@ func (e *Chromium) Focus() {
 		return
 	}
 	_ = e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
-}
-
-
-func IsSystemDarkTheme() bool {
-	k, err := registry.OpenKey(
-		registry.CURRENT_USER,
-		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
-		registry.QUERY_VALUE,
-	)
-	if err != nil {
-		return false
-	}
-	defer k.Close()
-
-	val, _, err := k.GetIntegerValue("AppsUseLightTheme")
-	if err != nil {
-		return false
-	}
-	return val == 0
 }
 
 func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
