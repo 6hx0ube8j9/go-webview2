@@ -23,41 +23,6 @@ var (
 	windowContextSync sync.RWMutex
 )
 
-var (
-	modgdi32                  = windows.NewLazySystemDLL("gdi32.dll")
-	procCreateSolidBrush      = modgdi32.NewProc("CreateSolidBrush")
-	procDeleteObject          = modgdi32.NewProc("DeleteObject")
-	moddwmapi                 = windows.NewLazySystemDLL("dwmapi.dll")
-	procDwmSetWindowAttribute = moddwmapi.NewProc("DwmSetWindowAttribute")
-	moduser32                 = windows.NewLazySystemDLL("user32.dll")
-	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
-	procGetClientRect         = moduser32.NewProc("GetClientRect")
-	procFillRect              = moduser32.NewProc("FillRect")
-	procInvalidateRect        = moduser32.NewProc("InvalidateRect")
-)
-
-func setWindowDarkMode(hwnd uintptr, isDark bool) {
-	var darkMode int32 = 0
-	if isDark {
-		darkMode = 1
-	}
-
-	ret, _, _ := procDwmSetWindowAttribute.Call(
-		hwnd,
-		20,
-		uintptr(unsafe.Pointer(&darkMode)),
-		unsafe.Sizeof(darkMode),
-	)
-	if ret != 0 {
-		_, _, _ = procDwmSetWindowAttribute.Call(
-			hwnd,
-			19,
-			uintptr(unsafe.Pointer(&darkMode)),
-			unsafe.Sizeof(darkMode),
-		)
-	}
-}
-
 func getWindowContext(wnd uintptr) interface{} {
 	windowContextSync.RLock()
 	defer windowContextSync.RUnlock()
@@ -105,17 +70,30 @@ type WebViewOptions struct {
 	Window unsafe.Pointer
 	Debug  bool
 
+	// DataPath specifies the datapath for the WebView2 runtime to use for the
+	// browser instance.
 	DataPath string
+
+	// AutoFocus will try to keep the WebView2 widget focused when the window
+	// is focused.
 	AutoFocus bool
+
+	// WindowOptions customizes the window that is created to embed the
+	// WebView2 widget.
 	WindowOptions WindowOptions
 }
 
+// New creates a new webview in a new window.
 func New(debug bool) WebView { return NewWithOptions(WebViewOptions{Debug: debug}) }
 
+// NewWindow creates a new webview using an existing window.
+//
+// Deprecated: Use NewWithOptions.
 func NewWindow(debug bool, window unsafe.Pointer) WebView {
 	return NewWithOptions(WebViewOptions{Debug: debug, Window: window})
 }
 
+// NewWithOptions creates a new webview using the provided options.
 func NewWithOptions(options WebViewOptions) WebView {
 	w := &webview{}
 	w.bindings = map[string]interface{}{}
@@ -136,10 +114,12 @@ func NewWithOptions(options WebViewOptions) WebView {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// disable context menu
 	err = settings.PutAreDefaultContextMenusEnabled(options.Debug)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// disable developer tools
 	err = settings.PutAreDevToolsEnabled(options.Debug)
 	if err != nil {
 		log.Fatal(err)
@@ -211,8 +191,11 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 	res := v.Call(args)
 	switch len(res) {
 	case 0:
+		// No results from the function, just return nil
 		return nil, nil
+
 	case 1:
+		// One result may be a value, or an error
 		if res[0].Type().Implements(errorType) {
 			if res[0].Interface() != nil {
 				return nil, res[0].Interface().(error)
@@ -220,7 +203,9 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 			return nil, nil
 		}
 		return res[0].Interface(), nil
+
 	case 2:
+		// Two results: first one is value, second is error
 		if !res[1].Type().Implements(errorType) {
 			return nil, errors.New("second return value must be an error")
 		}
@@ -228,6 +213,7 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 			return res[0].Interface(), nil
 		}
 		return res[0].Interface(), res[1].Interface().(error)
+
 	default:
 		return nil, errors.New("unexpected number of return values")
 	}
@@ -236,29 +222,13 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
-
-		case 0x0014: // WM_ERASEBKGND: 
-			hdc := wp
-			var rc w32.Rect
-			_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-
-			isDark := edge.IsSystemDarkTheme()
-			var color uint32 = 0x00FFFFFF
-			if isDark {
-				color = 0x00202020
-			}
-			brush, _, _ := procCreateSolidBrush.Call(uintptr(color))
-			_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
-			_, _, _ = procDeleteObject.Call(brush)
-			return 1 
-
+		case 0x0014: // WM_ERASEBKGND
+			edge.EraseWindowBackground(hwnd, wp)
+			return 1
 		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
-			isDark := edge.IsSystemDarkTheme()
-			setWindowDarkMode(hwnd, isDark)
-			_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)  
+			edge.HandleThemeChange(hwnd)
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
-
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
 		case w32.WMNCLButtonDown:
@@ -298,6 +268,8 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 }
 
 func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
+	// This function signature stopped making sense a long time ago.
+	// It is but legacy cruft at this point.
 	return w.CreateWithOptions(WindowOptions{})
 }
 
@@ -307,19 +279,14 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	var icon uintptr
 	if opts.IconId == 0 {
+		// load default icon
 		icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
 		icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
 	} else {
+		// load icon from resource
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
 	}
-
-	isDark := edge.IsSystemDarkTheme()
-	var hbrColor uint32 = 0x00FFFFFF
-	if isDark {
-		hbrColor = 0x00202020
-	}
-	hbrBackground, _, _ := procCreateSolidBrush.Call(uintptr(hbrColor))
 
 	className, _ := windows.UTF16PtrFromString("webview")
 	wc := w32.WndClassExW{
@@ -328,7 +295,6 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		LpszClassName: className,
 		HIcon:         windows.Handle(icon),
 		HIconSm:       windows.Handle(icon),
-		HbrBackground: windows.Handle(hbrBackground),
 		LpfnWndProc:   windows.NewCallback(wndproc),
 	}
 	_, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
@@ -346,11 +312,14 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	var posX, posY uint
 	if opts.Center {
+		// get screen size
 		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
 		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
+		// calculate window position
 		posX = (uint(screenWidth) - windowWidth) / 2
 		posY = (uint(screenHeight) - windowHeight) / 2
 	} else {
+		// use default position
 		posX = w32.CW_USEDEFAULT
 		posY = w32.CW_USEDEFAULT
 	}
@@ -359,7 +328,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
-		0xCF0000,
+		0xCF0000, // WS_OVERLAPPEDWINDOW
 		uintptr(posX),
 		uintptr(posY),
 		uintptr(windowWidth),
@@ -369,15 +338,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		uintptr(hinstance),
 		0,
 	)
-	
 	setWindowContext(w.hwnd, w)
 
-	oldBrush, _, _ := procSetClassLongPtrW.Call(w.hwnd, ^uintptr(9), hbrBackground)
-	if oldBrush != 0 && oldBrush != hbrBackground {
-		_, _, _ = procDeleteObject.Call(oldBrush)
-	}
-
-	setWindowDarkMode(w.hwnd, isDark)
+	edge.SetWindowDarkMode(w.hwnd, edge.IsSystemDarkTheme())
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
