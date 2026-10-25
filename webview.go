@@ -282,12 +282,19 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	}
 
 	className, _ := windows.UTF16PtrFromString("webview")
+	
+	gdi32 := windows.NewLazySystemDLL("gdi32.dll")
+    createSolidBrush := gdi32.NewProc("CreateSolidBrush")
+	
+    brush, _, _ := createSolidBrush.Call(uintptr(0x00202020))
+	
 	wc := w32.WndClassExW{
 		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
 		HInstance:     hinstance,
 		LpszClassName: className,
 		HIcon:         windows.Handle(icon),
 		HIconSm:       windows.Handle(icon),
+		HbrBackground: windows.Handle(brush),
 		LpfnWndProc:   windows.NewCallback(wndproc),
 	}
 	_, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
