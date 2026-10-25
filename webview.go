@@ -225,7 +225,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
 		case 0x0014: // WM_ERASEBKGND
-			edge.EraseWindowBackground(hwnd)
+			edge.EraseWindowBackground(hwnd, wp)
 			return 1
 
 		case w32.WMMove, w32.WMMoving:
@@ -289,7 +289,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
 	}
 
-	hbrBackground := edge.CreateThemeBrush()
+	hbrBackground := edge.CreateThemeBrush(isDark)
 	className, _ := windows.UTF16PtrFromString("webview")
 	wc := w32.WndClassExW{
 		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
