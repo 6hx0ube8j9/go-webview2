@@ -19,7 +19,6 @@ type Chromium struct {
 	focusOnInit           bool
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
-	DarkMode              bool  
 	inited                uintptr
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
