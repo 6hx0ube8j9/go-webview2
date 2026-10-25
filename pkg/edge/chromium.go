@@ -34,6 +34,7 @@ type Chromium struct {
 
 	// Settings
 	DataPath string
+	DarkMode bool
 
 	// permissions
 	permissions      map[CoreWebView2PermissionKind]CoreWebView2PermissionState
@@ -193,7 +194,7 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
 
-	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
+    ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
 	if e.DarkMode {
 		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
 	} else {
