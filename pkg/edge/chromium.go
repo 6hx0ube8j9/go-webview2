@@ -231,11 +231,28 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 			uintptr(unsafe.Pointer(&controller2)),
 		)
 		if hr == 0 && controller2 != nil {
-			_ = controller2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
+			isDark := false
+			var k windows.Handle
+			if windows.RegOpenKeyEx(windows.HKEY_CURRENT_USER, windows.StringToUTF16Ptr(`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`), 0, windows.KEY_READ, &k) == nil {
+				var val uint32
+				var size uint32 = 4
+				if windows.RegQueryValueEx(k, windows.StringToUTF16Ptr("AppsUseLightTheme"), nil, nil, (*byte)(unsafe.Pointer(&val)), &size) == nil {
+					isDark = (val == 0)
+				}
+				_ = windows.RegCloseKey(k)
+			}
+
+			var bg COREWEBVIEW2_COLOR
+			if isDark {
+				bg = COREWEBVIEW2_COLOR{A: 255, R: 0x18, G: 0x18, B: 0x18}
+			} else {
+				bg = COREWEBVIEW2_COLOR{A: 255, R: 0xFF, G: 0xFF, B: 0xFF}
+			}
+			_ = controller2.PutDefaultBackgroundColor(bg)
 			_, _, _ = controller2.vtbl.Release.Call(uintptr(unsafe.Pointer(controller2)))
 		}
 	}
-
+	atomic.StoreUintptr(&e.inited, 1)
 	atomic.StoreUintptr(&e.inited, 1)
 
 	if e.focusOnInit {
