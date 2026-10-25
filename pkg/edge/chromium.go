@@ -169,8 +169,9 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating environment failed with %08x", res)
+	if int32(res) < 0 || env == nil {
+		log.Printf("Creating environment failed with %08x", res)
+		return 0
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -184,7 +185,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 {
+	if int32(res) < 0 || controller == nil {
 		log.Fatalf("Creating controller failed with %08x", res)
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
@@ -220,6 +221,20 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	)
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
+
+	iidController2 := NewGUID("{c979903e-d4ca-4228-92eb-47ee3fa96eab}")
+	if iidController2 != nil {
+		var controller2 *ICoreWebView2Controller2
+		hr, _, _ := controller.vtbl.QueryInterface.Call(
+			uintptr(unsafe.Pointer(controller)),
+			uintptr(unsafe.Pointer(iidController2)),
+			uintptr(unsafe.Pointer(&controller2)),
+		)
+		if hr == 0 && controller2 != nil {
+			_ = controller2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
+			_, _, _ = controller2.vtbl.Release.Call(uintptr(unsafe.Pointer(controller2)))
+		}
+	}
 
 	atomic.StoreUintptr(&e.inited, 1)
 
