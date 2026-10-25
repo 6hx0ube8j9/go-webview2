@@ -248,9 +248,46 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 	}
 }
 
+var lastAppliedDark = !edge.IsSystemDarkTheme()
+
+func applyThemeIfChanged(hwnd uintptr, w *webview) {
+	isDark := edge.IsSystemDarkTheme()
+
+	if isDark != lastAppliedDark {
+		setWindowDarkMode(hwnd, isDark)
+
+		if chromium, ok := w.browser.(*edge.Chromium); ok {
+			if ctrl := chromium.GetController(); ctrl != nil {
+				ctrl2 := (*edge.ICoreWebView2Controller2)(unsafe.Pointer(ctrl))
+				var col edge.COREWEBVIEW2_COLOR
+				if isDark {
+					col = edge.COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32} 
+				} else {
+					col = edge.COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255}
+				}
+				
+				if err := ctrl2.PutDefaultBackgroundColor(col); err == nil {
+					lastAppliedDark = isDark
+				}
+			}
+		}
+	}
+}
+
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
+		case 0x0018:
+			if wp != 0 {
+				applyThemeIfChanged(hwnd, w)
+			}
+		case w32.WMActivate: 
+			if wp != w32.WAInactive {
+				applyThemeIfChanged(hwnd, w)
+				if w.autofocus {
+					w.browser.Focus()
+				}
+			}
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
 		case w32.WMNCLButtonDown:
@@ -259,13 +296,6 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			return r
 		case w32.WMSize:
 			w.browser.Resize()
-		case w32.WMActivate:
-			if wp == w32.WAInactive {
-				break
-			}
-			if w.autofocus {
-				w.browser.Focus()
-			}
 		case w32.WMClose:
 			_, _, _ = w32.User32DestroyWindow.Call(hwnd)
 		case w32.WMDestroy:
