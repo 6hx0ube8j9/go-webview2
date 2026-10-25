@@ -51,7 +51,6 @@ type webview struct {
 	mainthread uintptr
 	browser    browser
 	autofocus  bool
-	darkMode   bool
 	maxsz      w32.Point
 	minsz      w32.Point
 	m          sync.Mutex
@@ -225,23 +224,8 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
 		case 0x0014: // WM_ERASEBKGND
-			hdc := wp
-			var rc w32.Rect
-			_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-
-			var color uint32 = 0x00FFFFFF
-			if w.darkMode {
-				color = 0x00202020
-			}
-			brush, _, _ := procCreateSolidBrush.Call(uintptr(color))
-			_, _, _ = procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
-			_, _, _ = procDeleteObject.Call(brush)
+			edge.EraseWindowBackground(hwnd)
 			return 1
-
-		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
-			edge.HandleThemeChange(hwnd)
-			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
-			return r
 
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
@@ -288,26 +272,23 @@ func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
 }
 
 func (w *webview) CreateWithOptions(opts WindowOptions) bool {
-	w.darkMode = opts.DarkMode
-
+	isDark := opts.DarkMode
+	
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
 
 	var icon uintptr
 	if opts.IconId == 0 {
+		// load default icon
 		icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
 		icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
 	} else {
+		// load icon from resource
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
 	}
 
-	var hbrColor uint32 = 0x00FFFFFF
-	if opts.DarkMode {
-		hbrColor = 0x00202020
-	}
-	hbrBackground, _, _ := procCreateSolidBrush.Call(uintptr(hbrColor))
-
+	hbrBackground := edge.CreateThemeBrush()
 	className, _ := windows.UTF16PtrFromString("webview")
 	wc := w32.WndClassExW{
 		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
@@ -333,11 +314,14 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	var posX, posY uint
 	if opts.Center {
+		// get screen size
 		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
 		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
+		// calculate window position
 		posX = (uint(screenWidth) - windowWidth) / 2
 		posY = (uint(screenHeight) - windowHeight) / 2
 	} else {
+		// use default position
 		posX = w32.CW_USEDEFAULT
 		posY = w32.CW_USEDEFAULT
 	}
@@ -346,7 +330,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
-		0xCF0000,
+		0xCF0000, // WS_OVERLAPPEDWINDOW
 		uintptr(posX),
 		uintptr(posY),
 		uintptr(windowWidth),
@@ -358,16 +342,8 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	)
 	setWindowContext(w.hwnd, w)
 
-	oldBrush, _, _ := procSetClassLongPtrW.Call(w.hwnd, ^uintptr(9), hbrBackground)
-	if oldBrush != 0 && oldBrush != hbrBackground {
-		_, _, _ = procDeleteObject.Call(oldBrush)
-	}
-
-	setWindowDarkMode(w.hwnd, opts.DarkMode)
-
-	if c, ok := w.browser.(*edge.Chromium); ok {
-		c.DarkMode = opts.DarkMode
-	}
+	edge.UpdateWindowClassBrush(w.hwnd, isDark)
+	edge.SetWindowDarkMode(w.hwnd, isDark)
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
@@ -378,6 +354,14 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	}
 	w.browser.Resize()
 	return true
+}
+
+func (w *webview) SetDarkMode(isDark bool) {
+	w.Dispatch(func() {
+		edge.SetWindowDarkMode(w.hwnd, isDark)
+		edge.UpdateWindowClassBrush(w.hwnd, isDark)
+		_, _, _ = w32.User32InvalidateRect.Call(w.hwnd, 0, 1)
+	})
 }
 
 func (w *webview) Destroy() {
