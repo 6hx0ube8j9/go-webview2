@@ -16,6 +16,7 @@ import (
 	"github.com/jchv/go-webview2/pkg/edge"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 var (
@@ -270,24 +271,50 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
 
+	darkMode := false
+	key, err := registry.OpenKey(
+		registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
+		registry.QUERY_VALUE,
+	)
+	if err == nil {
+		if value, _, err := key.GetIntegerValue("AppsUseLightTheme"); err == nil {
+			darkMode = value == 0
+		}
+		_ = key.Close()
+	}
+
+	var colorRef uintptr = 0x00FFFFFF
+	if darkMode {
+		colorRef = 0x00202020
+	}
+
+	gdi32 := windows.NewLazySystemDLL("gdi32.dll")
+	createSolidBrush := gdi32.NewProc("CreateSolidBrush")
+	brush, _, _ := createSolidBrush.Call(colorRef)
+	if brush == 0 {
+		return false
+	}
+
 	var icon uintptr
 	if opts.IconId == 0 {
-		// load default icon
 		icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
 		icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
-		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
+		icon, _, _ = w32.User32LoadImageW.Call(
+			uintptr(hinstance), 32512, icow, icoh, 0,
+		)
 	} else {
-		// load icon from resource
-		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
+		icon, _, _ = w32.User32LoadImageW.Call(
+			uintptr(hinstance),
+			uintptr(opts.IconId),
+			1,
+			0,
+			0,
+			w32.LR_DEFAULTSIZE|w32.LR_SHARED,
+		)
 	}
 
 	className, _ := windows.UTF16PtrFromString("webview")
-	
-	gdi32 := windows.NewLazySystemDLL("gdi32.dll")
-    createSolidBrush := gdi32.NewProc("CreateSolidBrush")
-	
-    brush, _, _ := createSolidBrush.Call(uintptr(0x00202020))
-	
 	wc := w32.WndClassExW{
 		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
 		HInstance:     hinstance,
@@ -312,14 +339,11 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	var posX, posY uint
 	if opts.Center {
-		// get screen size
 		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
 		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
-		// calculate window position
 		posX = (uint(screenWidth) - windowWidth) / 2
 		posY = (uint(screenHeight) - windowHeight) / 2
 	} else {
-		// use default position
 		posX = w32.CW_USEDEFAULT
 		posY = w32.CW_USEDEFAULT
 	}
@@ -338,7 +362,24 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		uintptr(hinstance),
 		0,
 	)
+	if w.hwnd == 0 {
+		return false
+	}
+
 	setWindowContext(w.hwnd, w)
+
+	dwmapi := windows.NewLazySystemDLL("dwmapi.dll")
+	setWindowAttribute := dwmapi.NewProc("DwmSetWindowAttribute")
+	var darkModeValue int32
+	if darkMode {
+		darkModeValue = 1
+	}
+	_, _, _ = setWindowAttribute.Call(
+		w.hwnd,
+		20, // DWMWA_USE_IMMERSIVE_DARK_MODE
+		uintptr(unsafe.Pointer(&darkModeValue)),
+		unsafe.Sizeof(darkModeValue),
+	)
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
@@ -350,6 +391,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	w.browser.Resize()
 	return true
 }
+
 
 func (w *webview) Destroy() {
 	_, _, _ = w32.User32PostMessageW.Call(w.hwnd, w32.WMClose, 0, 0)
