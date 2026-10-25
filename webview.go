@@ -351,7 +351,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		posY = w32.CW_USEDEFAULT
 	}
 
-	w.hwnd, _, _ = w32.User32CreateWindowExW(
+    w.hwnd, _, _ = w32.User32CreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
@@ -365,6 +365,7 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		uintptr(hinstance),
 		0,
 	)
+	
 	setWindowContext(w.hwnd, w)
 
 	setWindowDarkMode(w.hwnd, isDark)
