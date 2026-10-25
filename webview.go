@@ -103,6 +103,7 @@ func NewWithOptions(options WebViewOptions) WebView {
 	chromium := edge.NewChromium()
 	chromium.MessageCallback = w.msgcb
 	chromium.DataPath = options.DataPath
+	chromium.DarkMode = options.WindowOptions.DarkMode
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
 
 	w.browser = chromium
@@ -360,6 +361,11 @@ func (w *webview) SetDarkMode(isDark bool) {
 	w.Dispatch(func() {
 		edge.SetWindowDarkMode(w.hwnd, isDark)
 		edge.UpdateWindowClassBrush(w.hwnd, isDark)
+		
+		if browser, ok := w.browser.(*edge.Chromium); ok {
+			browser.SetBackgroundColor(isDark)
+		}
+		
 		_, _, _ = w32.User32InvalidateRect.Call(w.hwnd, 0, 1)
 	})
 }
