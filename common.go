@@ -81,4 +81,13 @@ type WebView interface {
 	// f must be a function
 	// f must return either value and error or just error
 	Bind(name string, f interface{}) error
+
+	// SetDarkMode dynamically updates the theme of the window and the webview.
+	// Set isDark to true for dark mode, or false for light mode.
+	SetDarkMode(isDark bool)
+
+	// SetNewWindowHandler registers a callback to intercept new window requests (e.g., target="_blank").
+	// The handler should return true if the request is handled by the application,
+	// or false to let the library open the URL in the system's default browser.
+	SetNewWindowHandler(handler func(url string) bool)
 }
