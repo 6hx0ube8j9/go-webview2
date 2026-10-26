@@ -69,7 +69,7 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) GetUri() (string, error) {
 		uintptr(unsafe.Pointer(&uri)),
 	)
 	if int32(r) < 0 {
-		return "", windows.HRESULT(r)
+		return "", windows.Errno(r)
 	}
 	if uri == nil {
 		return "", nil
@@ -88,7 +88,7 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) erro
 		uintptr(h),
 	)
 	if int32(r) < 0 {
-		return windows.HRESULT(r)
+		return windows.Errno(r)
 	}
 	return nil
 }
