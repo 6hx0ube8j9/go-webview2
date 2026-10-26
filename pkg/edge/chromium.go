@@ -379,7 +379,7 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 	uri, err := args.GetUri()
 	if err == nil && uri != "" {
 		_ = args.PutHandled(true)
-		openDefaultBrowser(uri)
+		_ = openDefaultBrowser(e.hwnd, uri)
 	}
 	return 0
 }
