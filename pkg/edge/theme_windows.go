@@ -18,6 +18,8 @@ const (
 
 	DarkThemeColor  uint32 = 0x00202020 // BGR: #202020
 	LightThemeColor uint32 = 0x00FFFFFF // BGR: #FFFFFF
+
+	swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020 
 )
 
 var (
@@ -32,6 +34,7 @@ var (
 	procInvalidateRect        = moduser32.NewProc("InvalidateRect")
 	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
 	procGetClassLongPtrW      = moduser32.NewProc("GetClassLongPtrW")
+	procSetWindowPos          = moduser32.NewProc("SetWindowPos")
 )
 
 var currentBrush uintptr
@@ -99,18 +102,34 @@ func InvalidateWindow(hwnd uintptr) {
 	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
 
-func SyncTitleBarTheme(hwnd uintptr) {
-	isDark := false
+func IsSystemDarkMode() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
-	if err == nil {
-		val, _, err := k.GetIntegerValue("AppsUseLightTheme")
-		if err == nil && val == 0 {
-			isDark = true
-		}
-		k.Close()
+	if err != nil {
+		return false
 	}
+	defer k.Close()
 
+	val, _, err := k.GetIntegerValue("AppsUseLightTheme")
+	if err != nil {
+		return false
+	}
+	return val == 0
+}
+
+func RedrawWindowFrame(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	_, _, _ = procSetWindowPos.Call(
+		hwnd, 0,
+		0, 0, 0, 0,
+		uintptr(swpFrameChangedFlags),
+	)
+}
+
+func ApplyTheme(hwnd uintptr, isDark bool) {
 	SetWindowDarkMode(hwnd, isDark)
 	UpdateWindowClassBrush(hwnd, isDark)
-	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
+	InvalidateWindow(hwnd)
+	RedrawWindowFrame(hwnd)
 }
