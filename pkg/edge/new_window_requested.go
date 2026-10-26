@@ -16,7 +16,7 @@ var (
 	procShellExecuteW = modshell32.NewProc("ShellExecuteW")
 )
 
-func openDefaultBrowser(hwnd uintptr, targetURL string) error {
+func OpenDefaultBrowser(hwnd uintptr, targetURL string) error {
 	lower := strings.ToLower(strings.TrimSpace(targetURL))
 	if !strings.HasPrefix(lower, "http://") &&
 		!strings.HasPrefix(lower, "https://") &&
