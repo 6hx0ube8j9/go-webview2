@@ -16,6 +16,7 @@ import (
 	"github.com/jchv/go-webview2/pkg/edge"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 var (
