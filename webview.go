@@ -56,6 +56,7 @@ type webview struct {
 	m          sync.Mutex
 	bindings   map[string]interface{}
 	dispatchq  []func()
+	newWindowHandler func(url string) bool
 }
 
 type WindowOptions struct {
@@ -105,12 +106,28 @@ func NewWithOptions(options WebViewOptions) WebView {
 	chromium.DataPath = options.DataPath
 	chromium.DarkMode = options.WindowOptions.DarkMode
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
+	
 	chromium.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
 		uri, err := args.GetUri()
-		if err == nil && uri != "" {
-			_ = args.PutHandled(true)
-			_ = edge.OpenDefaultBrowser(w.hwnd, uri)
+		if err != nil {
+			return
 		}
+
+		_ = args.PutHandled(true)
+
+		if uri == "" {
+			return
+		}
+
+		w.m.Lock()
+		handler := w.newWindowHandler
+		w.m.Unlock()
+
+		if handler != nil && handler(uri) {
+			return
+		}
+
+		_ = edge.OpenDefaultBrowser(w.hwnd, uri)
 	}
 	
 	w.browser = chromium
@@ -523,21 +540,7 @@ func (w *webview) Bind(name string, f interface{}) error {
 }
 
 func (w *webview) SetNewWindowHandler(handler func(url string) bool) {
-	if browser, ok := w.browser.(*edge.Chromium); ok {
-		browser.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
-			uri, err := args.GetUri()
-			if err == nil && uri != "" {
-				_ = args.PutHandled(true)
-
-				handledByDownstream := false
-				if handler != nil {
-					handledByDownstream = handler(uri)
-				}
-
-				if !handledByDownstream {
-					_ = edge.OpenDefaultBrowser(w.hwnd, uri)
-				}
-			}
-		}
-	}
+	w.m.Lock()         // 加锁保护
+	defer w.m.Unlock()
+	w.newWindowHandler = handler
 }
