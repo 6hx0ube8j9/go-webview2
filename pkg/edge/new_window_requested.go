@@ -4,6 +4,8 @@
 package edge
 
 import (
+	"errors"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,17 +16,32 @@ var (
 	procShellExecuteW = modshell32.NewProc("ShellExecuteW")
 )
 
-func openDefaultBrowser(targetURL string) {
+func openDefaultBrowser(hwnd uintptr, targetURL string) error {
+	lower := strings.ToLower(strings.TrimSpace(targetURL))
+	if !strings.HasPrefix(lower, "http://") &&
+		!strings.HasPrefix(lower, "https://") &&
+		!strings.HasPrefix(lower, "mailto:") {
+		return errors.New("blocked unsafe URL scheme")
+	}
+
 	verb, _ := windows.UTF16PtrFromString("open")
-	target, _ := windows.UTF16PtrFromString(targetURL)
-	_, _, _ = procShellExecuteW.Call(
-		0,
+	target, err := windows.UTF16PtrFromString(targetURL)
+	if err != nil {
+		return err
+	}
+
+	ret, _, _ := procShellExecuteW.Call(
+		hwnd,
 		uintptr(unsafe.Pointer(verb)),
 		uintptr(unsafe.Pointer(target)),
 		0,
 		0,
 		1, // SW_SHOWNORMAL
 	)
+	if ret <= 32 {
+		return windows.GetLastError()
+	}
+	return nil
 }
 
 // ==================== ICoreWebView2NewWindowRequestedEventArgs ====================
@@ -47,12 +64,15 @@ type ICoreWebView2NewWindowRequestedEventArgs struct {
 
 func (i *ICoreWebView2NewWindowRequestedEventArgs) GetUri() (string, error) {
 	var uri *uint16
-	_, _, err := i.vtbl.GetURI.Call(
+	r, _, _ := i.vtbl.GetURI.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(unsafe.Pointer(&uri)),
 	)
-	if err != windows.ERROR_SUCCESS {
-		return "", err
+	if int32(r) < 0 {
+		return "", windows.HRESULT(r)
+	}
+	if uri == nil {
+		return "", nil
 	}
 	defer windows.CoTaskMemFree(unsafe.Pointer(uri))
 	return windows.UTF16PtrToString(uri), nil
@@ -63,12 +83,12 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) erro
 	if handled {
 		h = 1
 	}
-	_, _, err := i.vtbl.PutHandled.Call(
+	r, _, _ := i.vtbl.PutHandled.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(h),
 	)
-	if err != windows.ERROR_SUCCESS {
-		return err
+	if int32(r) < 0 {
+		return windows.HRESULT(r)
 	}
 	return nil
 }
