@@ -521,3 +521,23 @@ func (w *webview) Bind(name string, f interface{}) error {
 
 	return nil
 }
+
+func (w *webview) SetNewWindowHandler(handler func(url string) bool) {
+	if browser, ok := w.browser.(*edge.Chromium); ok {
+		browser.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
+			uri, err := args.GetUri()
+			if err == nil && uri != "" {
+				_ = args.PutHandled(true)
+
+				handledByDownstream := false
+				if handler != nil {
+					handledByDownstream = handler(uri)
+				}
+
+				if !handledByDownstream {
+					_ = edge.OpenDefaultBrowser(w.hwnd, uri)
+				}
+			}
+		}
+	}
+}
