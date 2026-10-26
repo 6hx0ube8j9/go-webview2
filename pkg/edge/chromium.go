@@ -44,6 +44,7 @@ type Chromium struct {
 	WebResourceRequestedCallback func(request *ICoreWebView2WebResourceRequest, args *ICoreWebView2WebResourceRequestedEventArgs)
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	AcceleratorKeyCallback       func(uint) bool
+	NewWindowRequestedCallback   func(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs)
 }
 
 func NewChromium() *Chromium {
@@ -376,10 +377,8 @@ func (e *Chromium) Focus() {
 }
 
 func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
-	uri, err := args.GetUri()
-	if err == nil && uri != "" {
-		_ = args.PutHandled(true)
-		_ = openDefaultBrowser(e.hwnd, uri)
+	if e.NewWindowRequestedCallback != nil {
+		e.NewWindowRequestedCallback(sender, args)
 	}
 	return 0
 }
