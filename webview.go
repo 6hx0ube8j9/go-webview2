@@ -105,7 +105,14 @@ func NewWithOptions(options WebViewOptions) WebView {
 	chromium.DataPath = options.DataPath
 	chromium.DarkMode = options.WindowOptions.DarkMode
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
-
+	chromium.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
+		uri, err := args.GetUri()
+		if err == nil && uri != "" {
+			_ = args.PutHandled(true)
+			_ = edge.OpenDefaultBrowser(w.hwnd, uri)
+		}
+	}
+	
 	w.browser = chromium
 	w.mainthread, _, _ = w32.Kernel32GetCurrentThreadID.Call()
 	if !w.CreateWithOptions(options.WindowOptions) {
