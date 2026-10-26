@@ -228,6 +228,25 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			edge.EraseWindowBackground(hwnd, wp)
 			return 1
 
+		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
+			edge.SyncTitleBarTheme(hwnd)
+			
+			if w.browser != nil {
+				if browser, ok := w.browser.(*edge.Chromium); ok {
+					isDark := false
+					k, _ := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
+					if k != 0 {
+						val, _, _ := k.GetIntegerValue("AppsUseLightTheme")
+						isDark = (val == 0)
+						k.Close()
+					}
+					browser.SetBackgroundColor(isDark)
+				}
+			}
+			
+			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
+			return r
+
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
 		case w32.WMNCLButtonDown:
@@ -367,7 +386,6 @@ func (w *webview) SetDarkMode(isDark bool) {
 		}
 		
 		edge.InvalidateWindow(w.hwnd)
-		_, _, _ = w32.User32PostMessageW.Call(w.hwnd, 0x031A, 0, 0)
 		
 		const swpFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 		_, _, _ = w32.User32SetWindowPos.Call(
