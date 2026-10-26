@@ -367,12 +367,12 @@ func (w *webview) SetDarkMode(isDark bool) {
 		}
 		
 		edge.InvalidateWindow(w.hwnd)
+		_, _, _ = w32.User32PostMessageW.Call(w.hwnd, 0x031A, 0, 0)
 		
 		const swpFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 		_, _, _ = w32.User32SetWindowPos.Call(
-			w.hwnd, 
-			0,  
-			0, 0,
+			w.hwnd, 0, 
+			0, 0, 
 			0, 0, 
 			uintptr(swpFlags),
 		)
