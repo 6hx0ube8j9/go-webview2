@@ -8,6 +8,7 @@ import (
 
 	"github.com/jchv/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const (
@@ -95,5 +96,21 @@ func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 }
 
 func InvalidateWindow(hwnd uintptr) {
+	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
+}
+
+func SyncTitleBarTheme(hwnd uintptr) {
+	isDark := false
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
+	if err == nil {
+		val, _, err := k.GetIntegerValue("AppsUseLightTheme")
+		if err == nil && val == 0 {
+			isDark = true
+		}
+		k.Close()
+	}
+
+	SetWindowDarkMode(hwnd, isDark)
+	UpdateWindowClassBrush(hwnd, isDark)
 	_, _, _ = procInvalidateRect.Call(hwnd, 0, 1)
 }
