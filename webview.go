@@ -16,7 +16,6 @@ import (
 	"github.com/jchv/go-webview2/pkg/edge"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
 
 var (
@@ -222,6 +221,15 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 	}
 }
 
+func (w *webview) SetDarkMode(isDark bool) {
+	w.Dispatch(func() {
+		edge.ApplyTheme(w.hwnd, isDark)	
+		if browser, ok := w.browser.(*edge.Chromium); ok {
+			browser.SetBackgroundColor(isDark)
+		}
+	})
+}
+
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
@@ -230,17 +238,11 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			return 1
 
 		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
-			edge.SyncTitleBarTheme(hwnd)
+			isDark := edge.IsSystemDarkMode()
+			edge.ApplyTheme(hwnd, isDark)
 			
 			if w.browser != nil {
 				if browser, ok := w.browser.(*edge.Chromium); ok {
-					isDark := false
-					k, _ := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
-					if k != 0 {
-						val, _, _ := k.GetIntegerValue("AppsUseLightTheme")
-						isDark = (val == 0)
-						k.Close()
-					}
 					browser.SetBackgroundColor(isDark)
 				}
 			}
@@ -361,10 +363,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		uintptr(hinstance),
 		0,
 	)
+	
 	setWindowContext(w.hwnd, w)
-
-	edge.UpdateWindowClassBrush(w.hwnd, isDark)
-	edge.SetWindowDarkMode(w.hwnd, isDark)
+	edge.ApplyTheme(w.hwnd, isDark)
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
@@ -375,27 +376,6 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	}
 	w.browser.Resize()
 	return true
-}
-
-func (w *webview) SetDarkMode(isDark bool) {
-	w.Dispatch(func() {
-		edge.SetWindowDarkMode(w.hwnd, isDark)
-		edge.UpdateWindowClassBrush(w.hwnd, isDark)
-		
-		if browser, ok := w.browser.(*edge.Chromium); ok {
-			browser.SetBackgroundColor(isDark)
-		}
-		
-		edge.InvalidateWindow(w.hwnd)
-		
-		const swpFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
-		_, _, _ = w32.User32SetWindowPos.Call(
-			w.hwnd, 0, 
-			0, 0, 
-			0, 0, 
-			uintptr(swpFlags),
-		)
-	})
 }
 
 func (w *webview) Destroy() {
