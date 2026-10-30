@@ -38,12 +38,17 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		if ppvObject == nil {
 			return 0x80004003 // E_POINTER
 		}
+		
 		if *riid == iidIUnknown || *riid == iidICoreWebView2EnvironmentOptions {
 			*ppvObject = this
 			return 0 // S_OK
 		}
-		*ppvObject = nil
-		return 0x80004002 // E_NOINTERFACE
+		
+		guidStr := fmt.Sprintf("微软隐藏接口: %08X-%04X-%04X-%x", riid.Data1, riid.Data2, riid.Data3, riid.Data4)
+		_ = os.WriteFile("webview2_missing_guid.txt", []byte(guidStr), 0644)
+		
+		*ppvObject = this
+		return 0 // S_OK
 	}),
 	AddRef: windows.NewCallback(func(this unsafe.Pointer) uintptr {
 		return 1
