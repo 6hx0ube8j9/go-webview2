@@ -2,6 +2,8 @@ package edge
 
 import (
 	"unsafe"
+	"os"
+	"fmt"
 
 	"golang.org/x/sys/windows"
 )
