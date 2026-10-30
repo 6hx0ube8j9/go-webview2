@@ -15,6 +15,8 @@ import (
 )
 
 type Chromium struct {
+	AdditionalBrowserArguments string
+	environmentOptions        *CoreWebView2EnvironmentOptions
 	hwnd                  uintptr
 	focusOnInit           bool
 	controller            *ICoreWebView2Controller
@@ -88,7 +90,13 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
 	}
 
-	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), 0, e.envCompleted)
+	var envOpts uintptr
+	if e.AdditionalBrowserArguments != "" {
+		e.environmentOptions = NewCoreWebView2EnvironmentOptions(e.AdditionalBrowserArguments)
+		envOpts = uintptr(unsafe.Pointer(e.environmentOptions))
+	}
+
+	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), envOpts, e.envCompleted)
 	if err != nil {
 		log.Printf("Error calling Webview2Loader: %v", err)
 		return false
