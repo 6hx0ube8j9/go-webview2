@@ -34,7 +34,7 @@ type iCoreWebView2EnvironmentOptionsVtbl struct {
 }
 
 var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
-    QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
+	QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
 		if ppvObject == nil {
 			return 0x80004003 // E_POINTER
 		}
@@ -79,34 +79,25 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		return 0 // S_OK
 	}),
 	PutAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	GetLanguage: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
-		if value != nil {
-			*value = nil
-		}
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	PutLanguage: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	GetTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
-		if value != nil {
-			*value = nil
-		}
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	PutTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	GetAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow *int32) uintptr {
-		if allow != nil {
-			*allow = 0
-		}
-		return 0 // S_OK
+		return 0x80004001
 	}),
 	PutAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow int32) uintptr {
-		return 0 // S_OK
+		return 0x80004001
 	}),
 }
 
