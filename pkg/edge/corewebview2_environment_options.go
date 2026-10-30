@@ -73,7 +73,7 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		}
 
 		dst := (*[1 << 20]uint16)(unsafe.Pointer(mem))[:len(utf16Chars):len(utf16Chars)]
-		copy(dst, src)
+		copy(dst, utf16Chars)
 
 		*value = (*uint16)(unsafe.Pointer(mem))
 		return 0 // S_OK
