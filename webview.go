@@ -80,6 +80,8 @@ type WebViewOptions struct {
 	// is focused.
 	AutoFocus bool
 
+	AdditionalBrowserArguments string
+
 	// WindowOptions customizes the window that is created to embed the
 	// WebView2 widget.
 	WindowOptions WindowOptions
@@ -105,6 +107,7 @@ func NewWithOptions(options WebViewOptions) WebView {
 	chromium.MessageCallback = w.msgcb
 	chromium.DataPath = options.DataPath
 	chromium.DarkMode = options.WindowOptions.DarkMode
+	chromium.AdditionalBrowserArguments = options.AdditionalBrowserArguments
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
 	
 	chromium.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
