@@ -2,8 +2,6 @@ package edge
 
 import (
 	"unsafe"
-	"os"
-	"fmt"
 
 	"golang.org/x/sys/windows"
 )
@@ -13,7 +11,7 @@ var (
 	procCoTaskMemAlloc = modOle32.NewProc("CoTaskMemAlloc")
 
 	iidIUnknown                         = windows.GUID{Data1: 0x00000000, Data2: 0x0000, Data3: 0x0000, Data4: [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
-	iidICoreWebView2EnvironmentOptions = windows.GUID{Data1: 0x2FDE08A5, Data2: 0x9E02, Data3: 0x4AE7, Data4: [8]byte{0xAC, 0x1B, 0x02, 0x16, 0x40, 0xCE, 0x76, 0x64}}
+	iidICoreWebView2EnvironmentOptions = windows.GUID{Data1: 0x2FDE08A8, Data2: 0x1E9A, Data3: 0x4766, Data4: [8]byte{0x8C, 0x05, 0x95, 0xA9, 0xCE, 0xB9, 0xD1, 0xC5}}
 )
 
 type CoreWebView2EnvironmentOptions struct {
@@ -36,21 +34,16 @@ type iCoreWebView2EnvironmentOptionsVtbl struct {
 }
 
 var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
-	QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
+    QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
 		if ppvObject == nil {
 			return 0x80004003 // E_POINTER
 		}
-		
 		if *riid == iidIUnknown || *riid == iidICoreWebView2EnvironmentOptions {
 			*ppvObject = this
 			return 0 // S_OK
 		}
-		
-		guidStr := fmt.Sprintf("微软隐藏接口: %08X-%04X-%04X-%x", riid.Data1, riid.Data2, riid.Data3, riid.Data4)
-		_ = os.WriteFile("webview2_missing_guid.txt", []byte(guidStr), 0644)
-		
-		*ppvObject = this
-		return 0 // S_OK
+		*ppvObject = nil
+		return 0x80004002 // E_NOINTERFACE
 	}),
 	AddRef: windows.NewCallback(func(this unsafe.Pointer) uintptr {
 		return 1
