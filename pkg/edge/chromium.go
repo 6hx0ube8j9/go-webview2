@@ -16,6 +16,7 @@ import (
 
 type Chromium struct {
 	AdditionalBrowserArguments string
+	environmentOptions        *CoreWebView2EnvironmentOptions
 	hwnd                  uintptr
 	focusOnInit           bool
 	controller            *ICoreWebView2Controller
@@ -91,8 +92,8 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 
 	var envOpts uintptr
 	if e.AdditionalBrowserArguments != "" {
-		opts := NewCoreWebView2EnvironmentOptions(e.AdditionalBrowserArguments)
-		envOpts = uintptr(unsafe.Pointer(opts))
+		e.environmentOptions = NewCoreWebView2EnvironmentOptions(e.AdditionalBrowserArguments)
+		envOpts = uintptr(unsafe.Pointer(e.environmentOptions))
 	}
 
 	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), envOpts, e.envCompleted)
