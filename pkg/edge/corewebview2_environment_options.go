@@ -72,8 +72,7 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 			return 0x8007000E // E_OUTOFMEMORY
 		}
 
-		dst := unsafe.Slice((*byte)(unsafe.Pointer(mem)), byteLen)
-		src := unsafe.Slice((*byte)(unsafe.Pointer(&utf16Chars[0])), byteLen)
+		dst := (*[1 << 20]uint16)(unsafe.Pointer(mem))[:len(utf16Chars):len(utf16Chars)]
 		copy(dst, src)
 
 		*value = (*uint16)(unsafe.Pointer(mem))
