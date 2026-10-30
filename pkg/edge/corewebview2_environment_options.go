@@ -14,6 +14,7 @@ var (
 	iidICoreWebView2EnvironmentOptions = windows.GUID{Data1: 0x2FDE08A8, Data2: 0x1E9A, Data3: 0x4766, Data4: [8]byte{0x8C, 0x05, 0x95, 0xA9, 0xCE, 0xB9, 0xD1, 0xC5}}
 )
 
+// 分配 UTF-16 内存供 Loader 使用
 func allocCoTaskMemString(str string) (*uint16, uintptr) {
 	utf16Chars, err := windows.UTF16FromString(str)
 	if err != nil {
@@ -52,30 +53,20 @@ type iCoreWebView2EnvironmentOptionsVtbl struct {
 }
 
 var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
-	// 1. QueryInterface
 	QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
 		if ppvObject == nil {
 			return 0x80004003 // E_POINTER
 		}
 		if *riid == iidIUnknown || *riid == iidICoreWebView2EnvironmentOptions {
 			*ppvObject = this
-			return 0 // S_OK
+			return 0
 		}
 		*ppvObject = nil
 		return 0x80004002 // E_NOINTERFACE
 	}),
+	AddRef:  windows.NewCallback(func(this unsafe.Pointer) uintptr { return 1 }),
+	Release: windows.NewCallback(func(this unsafe.Pointer) uintptr { return 1 }),
 
-	// 2. AddRef
-	AddRef: windows.NewCallback(func(this unsafe.Pointer) uintptr {
-		return 1
-	}),
-
-	// 3. Release
-	Release: windows.NewCallback(func(this unsafe.Pointer) uintptr {
-		return 1
-	}),
-
-	// 4. GetAdditionalBrowserArguments
 	GetAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
 		if value == nil {
 			return 0x80004003
@@ -86,32 +77,12 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 			return hr
 		}
 		*value = ptr
-		return 0 // S_OK
-	}),
-
-	// 5. PutAdditionalBrowserArguments
-	PutAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
 		return 0
 	}),
 
-	// 6. GetLanguage：分配空字符串，代表使用系统默认语言
-	GetLanguage: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
-		if value == nil {
-			return 0x80004003
-		}
-		ptr, hr := allocCoTaskMemString("")
-		if hr != 0 {
-			return hr
-		}
-		*value = ptr
-		return 0
-	}),
-
-	// 7. PutLanguage
-	PutLanguage: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
-		return 0
-	}),
-
+	PutAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr { return 0x80004001 }),
+	GetLanguage:                   windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr { return 0x80004001 }),
+	PutLanguage:                   windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr { return 0x80004001 }),
 
 	GetTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
 		if value == nil {
@@ -125,24 +96,9 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		return 0 // S_OK
 	}),
 
-	// 9. PutTargetCompatibleBrowserVersion
-	PutTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
-		return 0
-	}),
-
-	// 10. GetAllowSingleSignOnUsingOSPrimaryAccount
-	GetAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow *int32) uintptr {
-		if allow == nil {
-			return 0x80004003
-		}
-		*allow = 0 // FALSE
-		return 0
-	}),
-
-	// 11. PutAllowSingleSignOnUsingOSPrimaryAccount
-	PutAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow int32) uintptr {
-		return 0
-	}),
+	PutTargetCompatibleBrowserVersion:         windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr { return 0x80004001 }),
+	GetAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow *int32) uintptr { return 0x80004001 }),
+	PutAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow int32) uintptr { return 0x80004001 }),
 }
 
 func NewCoreWebView2EnvironmentOptions(additionalArgs string) *CoreWebView2EnvironmentOptions {
