@@ -371,7 +371,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		targetY = 100
 	}
 
-	offscreenCoord := uintptr(uint32(int32(-32000)))
+	var offscreen int32 = -32000
+	offscreenCoord := uintptr(offscreen)
+
 	w.hwnd, _, _ = w32.User32CreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
