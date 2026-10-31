@@ -26,8 +26,8 @@ func allocCoTaskMemString(str string) (*uint16, uintptr) {
 	if mem == 0 {
 		return nil, 0x8007000E // E_OUTOFMEMORY
 	}
-
-	dst := unsafe.Slice((*uint16)(unsafe.Pointer(mem)), len(utf16Chars))
+	
+	dst := (*[1 << 20]uint16)(unsafe.Pointer(mem))[:len(utf16Chars):len(utf16Chars)]
 	copy(dst, utf16Chars)
 
 	return (*uint16)(unsafe.Pointer(mem)), 0 // S_OK
