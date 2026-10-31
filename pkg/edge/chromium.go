@@ -22,6 +22,7 @@ type Chromium struct {
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
 	inited                uintptr
+	initFailed            uintptr
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
 	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
@@ -121,6 +122,11 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		_, _, _ = w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		_, _, _ = w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
+
+	if atomic.LoadUintptr(&e.initFailed) != 0 || e.controller == nil {
+		return false
+	}
+	
 	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
 	return true
 }
@@ -182,7 +188,10 @@ func (e *Chromium) Release() uintptr {
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
 	if int32(res) < 0 || env == nil {
-		log.Fatalf("Creating environment failed with %08x", res)
+		log.Printf("Creating environment failed with %08x", res)
+		atomic.StoreUintptr(&e.initFailed, 1)
+		atomic.StoreUintptr(&e.inited, 1) 
+		return 0
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -196,13 +205,16 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating controller failed with %08x", res)
+	if int64(res) < 0 || controller == nil {
+		log.Printf("Creating controller failed with %08x", res)
+		atomic.StoreUintptr(&e.initFailed, 1)
+		atomic.StoreUintptr(&e.inited, 1)
+		return 0
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
 
-    ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
+	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
 	if e.DarkMode {
 		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
 	} else {
