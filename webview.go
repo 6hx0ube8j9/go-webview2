@@ -394,16 +394,16 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	setWindowContext(w.hwnd, w)
 	edge.ApplyTheme(w.hwnd, isDark)
 
+	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
+	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+
 	if !w.browser.Embed(w.hwnd) {
 		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
 		setWindowContext(w.hwnd, nil)
 		w.hwnd = 0
 		return false
 	}
-
-	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
-	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	w.browser.Resize()
 	return true
