@@ -323,18 +323,16 @@ func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
 
 func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	isDark := opts.DarkMode
-	
+
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
 
 	var icon uintptr
 	if opts.IconId == 0 {
-		// load default icon
 		icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
 		icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
 	} else {
-		// load icon from resource
 		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
 	}
 
@@ -362,27 +360,25 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		windowHeight = 480
 	}
 
-	var posX, posY uint
+	var targetX, targetY int
+	screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
+	screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
 	if opts.Center {
-		// get screen size
-		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
-		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
-		// calculate window position
-		posX = (uint(screenWidth) - windowWidth) / 2
-		posY = (uint(screenHeight) - windowHeight) / 2
+		targetX = (int(screenWidth) - int(windowWidth)) / 2
+		targetY = (int(screenHeight) - int(windowHeight)) / 2
 	} else {
-		// use default position
-		posX = w32.CW_USEDEFAULT
-		posY = w32.CW_USEDEFAULT
+		targetX = 100
+		targetY = 100
 	}
 
+	offscreenCoord := uintptr(uint32(int32(-32000)))
 	w.hwnd, _, _ = w32.User32CreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
 		0xCF0000, // WS_OVERLAPPEDWINDOW
-		uintptr(posX),
-		uintptr(posY),
+		offscreenCoord,
+		offscreenCoord,
 		uintptr(windowWidth),
 		uintptr(windowHeight),
 		0,
@@ -390,13 +386,12 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		uintptr(hinstance),
 		0,
 	)
-	
+
 	setWindowContext(w.hwnd, w)
 	edge.ApplyTheme(w.hwnd, isDark)
 
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	if !w.browser.Embed(w.hwnd) {
 		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
@@ -406,6 +401,15 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	}
 
 	w.browser.Resize()
+
+	_, _, _ = w32.User32SetWindowPos.Call(
+		w.hwnd, 0,
+		uintptr(int32(targetX)), uintptr(int32(targetY)),
+		uintptr(windowWidth), uintptr(windowHeight),
+		w32.SWPNoZOrder|w32.SWPFrameChanged,
+	)
+	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+
 	return true
 }
 
