@@ -371,16 +371,13 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		targetY = 100
 	}
 
-	var offscreen int32 = -32000
-	offscreenCoord := uintptr(offscreen)
-
 	w.hwnd, _, _ = w32.User32CreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
 		0xCF0000, // WS_OVERLAPPEDWINDOW
-		offscreenCoord,
-		offscreenCoord,
+		uintptr(int32(targetX)),
+		uintptr(int32(targetY)),
 		uintptr(windowWidth),
 		uintptr(windowHeight),
 		0,
@@ -392,9 +389,6 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	setWindowContext(w.hwnd, w)
 	edge.ApplyTheme(w.hwnd, isDark)
 
-	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
-	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-
 	if !w.browser.Embed(w.hwnd) {
 		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
 		setWindowContext(w.hwnd, nil)
@@ -404,11 +398,12 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	w.browser.Resize()
 
+	const swpShowWindow = 0x0040
 	_, _, _ = w32.User32SetWindowPos.Call(
 		w.hwnd, 0,
 		uintptr(int32(targetX)), uintptr(int32(targetY)),
 		uintptr(windowWidth), uintptr(windowHeight),
-		w32.SWPNoZOrder|w32.SWPFrameChanged,
+		swpShowWindow|w32.SWPFrameChanged,
 	)
 	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
