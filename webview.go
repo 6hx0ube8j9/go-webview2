@@ -18,6 +18,18 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const (
+	wmDPIChanged  = 0x02E0
+	swpNoActivate = 0x0010
+)
+
+type dpiRect struct {
+	Left   int32
+	Top    int32
+	Right  int32
+	Bottom int32
+}
+
 var (
 	windowContext     = map[uintptr]interface{}{}
 	windowContextSync sync.RWMutex
@@ -32,7 +44,11 @@ func getWindowContext(wnd uintptr) interface{} {
 func setWindowContext(wnd uintptr, data interface{}) {
 	windowContextSync.Lock()
 	defer windowContextSync.Unlock()
-	windowContext[wnd] = data
+	if data == nil {
+		delete(windowContext, wnd)
+	} else {
+		windowContext[wnd] = data
+	}
 }
 
 type browser interface {
@@ -260,6 +276,25 @@ func (w *webview) SetDarkMode(isDark bool) {
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
+		case wmDPIChanged:
+			suggestedRect := (*dpiRect)(unsafe.Pointer(lp))
+			newWidth := suggestedRect.Right - suggestedRect.Left
+			newHeight := suggestedRect.Bottom - suggestedRect.Top
+
+			_, _, _ = w32.User32SetWindowPos.Call(
+				hwnd, 0,
+				uintptr(suggestedRect.Left),
+				uintptr(suggestedRect.Top),
+				uintptr(newWidth),
+				uintptr(newHeight),
+				w32.SWPNoZOrder|w32.SWPFrameChanged|swpNoActivate,
+			)
+
+			if w.browser != nil {
+				w.browser.Resize()
+			}
+			return 0
+
 		case 0x0014: // WM_ERASEBKGND
 			edge.EraseWindowBackground(hwnd, wp)
 			return 1
@@ -267,24 +302,27 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
 			isDark := edge.IsSystemDarkMode()
 			edge.ApplyTheme(hwnd, isDark)
-			
+
 			if w.browser != nil {
 				if browser, ok := w.browser.(*edge.Chromium); ok {
 					browser.SetBackgroundColor(isDark)
 				}
 			}
-			
+
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
 
 		case w32.WMMove, w32.WMMoving:
 			_ = w.browser.NotifyParentWindowPositionChanged()
+
 		case w32.WMNCLButtonDown:
 			_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
+
 		case w32.WMSize:
 			w.browser.Resize()
+
 		case w32.WMActivate:
 			if wp == w32.WAInactive {
 				break
@@ -292,10 +330,17 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			if w.autofocus {
 				w.browser.Focus()
 			}
+
 		case w32.WMClose:
 			_, _, _ = w32.User32DestroyWindow.Call(hwnd)
+			return 0
+
 		case w32.WMDestroy:
+			setWindowContext(hwnd, nil)
+			w.hwnd = 0
 			w.Terminate()
+			return 0
+
 		case w32.WMGetMinMaxInfo:
 			lpmmi := (*w32.MinMaxInfo)(unsafe.Pointer(lp))
 			if w.maxsz.X > 0 && w.maxsz.Y > 0 {
@@ -305,6 +350,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			if w.minsz.X > 0 && w.minsz.Y > 0 {
 				lpmmi.PtMinTrackSize = w.minsz
 			}
+
 		default:
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
@@ -361,9 +407,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	}
 
 	var targetX, targetY int
-	screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
-	screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
 	if opts.Center {
+		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
+		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
 		targetX = (int(screenWidth) - int(windowWidth)) / 2
 		targetY = (int(screenHeight) - int(windowHeight)) / 2
 	} else {
@@ -398,13 +444,8 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 
 	w.browser.Resize()
 
-	const swpShowWindow = 0x0040
-	_, _, _ = w32.User32SetWindowPos.Call(
-		w.hwnd, 0,
-		uintptr(int32(targetX)), uintptr(int32(targetY)),
-		uintptr(windowWidth), uintptr(windowHeight),
-		swpShowWindow|w32.SWPFrameChanged,
-	)
+	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
+	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
 	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	return true
@@ -548,7 +589,7 @@ func (w *webview) Bind(name string, f interface{}) error {
 }
 
 func (w *webview) SetNewWindowHandler(handler func(url string) bool) {
-	w.m.Lock()         // 加锁保护
+	w.m.Lock() 
 	defer w.m.Unlock()
 	w.newWindowHandler = handler
 }
