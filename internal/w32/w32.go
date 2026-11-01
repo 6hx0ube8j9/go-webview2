@@ -93,6 +93,7 @@ const (
 	WMGetMinMaxInfo = 0x0024
 	WMNCLButtonDown = 0x00A1
 	WMMoving        = 0x0216
+	WMDPIChanged    = 0x02E0
 	WMApp           = 0x8000
 )
 
