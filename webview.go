@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"reflect"
+	"runtime"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -17,18 +18,6 @@ import (
 
 	"golang.org/x/sys/windows"
 )
-
-const (
-	wmDPIChanged  = 0x02E0
-	swpNoActivate = 0x0010
-)
-
-type dpiRect struct {
-	Left   int32
-	Top    int32
-	Right  int32
-	Bottom int32
-}
 
 var (
 	windowContext     = map[uintptr]interface{}{}
@@ -63,24 +52,24 @@ type browser interface {
 }
 
 type webview struct {
-	hwnd       uintptr
-	mainthread uintptr
-	browser    browser
-	autofocus  bool
-	maxsz      w32.Point
-	minsz      w32.Point
-	m          sync.Mutex
-	bindings   map[string]interface{}
-	dispatchq  []func()
+	hwnd             uintptr
+	mainthread       uintptr
+	browser          browser
+	autofocus        bool
+	maxsz            w32.Point
+	minsz            w32.Point
+	m                sync.Mutex
+	bindings         map[string]interface{}
+	dispatchq        []func()
 	newWindowHandler func(url string) bool
 }
 
 type WindowOptions struct {
-	Title  string
-	Width  uint
-	Height uint
-	IconId uint
-	Center bool
+	Title    string
+	Width    uint
+	Height   uint
+	IconId   uint
+	Center   bool
 	DarkMode bool
 }
 
@@ -115,6 +104,11 @@ func NewWindow(debug bool, window unsafe.Pointer) WebView {
 
 // NewWithOptions creates a new webview using the provided options.
 func NewWithOptions(options WebViewOptions) WebView {
+	runtime.LockOSThread()
+
+	const coinitApartmentThreaded = 2
+	_, _, _ = w32.Ole32CoInitializeEx.Call(0, coinitApartmentThreaded)
+
 	w := &webview{}
 	w.bindings = map[string]interface{}{}
 	w.autofocus = options.AutoFocus
@@ -125,7 +119,7 @@ func NewWithOptions(options WebViewOptions) WebView {
 	chromium.DarkMode = options.WindowOptions.DarkMode
 	chromium.AdditionalBrowserArguments = options.AdditionalBrowserArguments
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
-	
+
 	chromium.NewWindowRequestedCallback = func(sender *edge.ICoreWebView2, args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
 		uri, err := args.GetUri()
 		if err != nil {
@@ -148,10 +142,11 @@ func NewWithOptions(options WebViewOptions) WebView {
 
 		_ = edge.OpenDefaultBrowser(w.hwnd, uri)
 	}
-	
+
 	w.browser = chromium
 	w.mainthread, _, _ = w32.Kernel32GetCurrentThreadID.Call()
 	if !w.CreateWithOptions(options.WindowOptions) {
+		runtime.UnlockOSThread()
 		return nil
 	}
 
@@ -236,11 +231,9 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 	res := v.Call(args)
 	switch len(res) {
 	case 0:
-		// No results from the function, just return nil
 		return nil, nil
 
 	case 1:
-		// One result may be a value, or an error
 		if res[0].Type().Implements(errorType) {
 			if res[0].Interface() != nil {
 				return nil, res[0].Interface().(error)
@@ -250,7 +243,6 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 		return res[0].Interface(), nil
 
 	case 2:
-		// Two results: first one is value, second is error
 		if !res[1].Type().Implements(errorType) {
 			return nil, errors.New("second return value must be an error")
 		}
@@ -266,7 +258,7 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 
 func (w *webview) SetDarkMode(isDark bool) {
 	w.Dispatch(func() {
-		edge.ApplyTheme(w.hwnd, isDark)	
+		edge.ApplyTheme(w.hwnd, isDark)
 		if browser, ok := w.browser.(*edge.Chromium); ok {
 			browser.SetBackgroundColor(isDark)
 		}
@@ -276,8 +268,8 @@ func (w *webview) SetDarkMode(isDark bool) {
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
-		case wmDPIChanged:
-			suggestedRect := (*dpiRect)(unsafe.Pointer(lp))
+		case w32.WMDPIChanged:
+			suggestedRect := (*w32.Rect)(unsafe.Pointer(lp))
 			newWidth := suggestedRect.Right - suggestedRect.Left
 			newHeight := suggestedRect.Bottom - suggestedRect.Top
 
@@ -287,7 +279,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 				uintptr(suggestedRect.Top),
 				uintptr(newWidth),
 				uintptr(newHeight),
-				w32.SWPNoZOrder|w32.SWPFrameChanged|swpNoActivate,
+				w32.SWPNoZOrder|w32.SWPFrameChanged|w32.SWPNoActivate,
 			)
 
 			if w.browser != nil {
@@ -362,8 +354,6 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 }
 
 func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
-	// This function signature stopped making sense a long time ago.
-	// It is but legacy cruft at this point.
 	return w.CreateWithOptions(WindowOptions{})
 }
 
@@ -456,6 +446,8 @@ func (w *webview) Destroy() {
 }
 
 func (w *webview) Run() {
+	defer runtime.UnlockOSThread()
+
 	var msg w32.Msg
 	for {
 		_, _, _ = w32.User32GetMessageW.Call(
@@ -589,7 +581,7 @@ func (w *webview) Bind(name string, f interface{}) error {
 }
 
 func (w *webview) SetNewWindowHandler(handler func(url string) bool) {
-	w.m.Lock() 
+	w.m.Lock()
 	defer w.m.Unlock()
 	w.newWindowHandler = handler
 }
