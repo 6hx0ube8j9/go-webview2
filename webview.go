@@ -432,10 +432,12 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		return false
 	}
 
-	w.browser.Resize()
-
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+
+	w.browser.Resize()
+	_ = w.browser.NotifyParentWindowPositionChanged()
+
 	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	return true
