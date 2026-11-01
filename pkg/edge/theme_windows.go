@@ -19,7 +19,7 @@ const (
 	DarkThemeColor  uint32 = 0x00202020 // BGR: #202020
 	LightThemeColor uint32 = 0x00FFFFFF // BGR: #FFFFFF
 
-	swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020 
+	swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 )
 
 var (
@@ -29,12 +29,9 @@ var (
 	moddwmapi                 = windows.NewLazySystemDLL("dwmapi.dll")
 	procDwmSetWindowAttribute = moddwmapi.NewProc("DwmSetWindowAttribute")
 	moduser32                 = windows.NewLazySystemDLL("user32.dll")
-	procGetClientRect         = moduser32.NewProc("GetClientRect")
 	procFillRect              = moduser32.NewProc("FillRect")
 	procInvalidateRect        = moduser32.NewProc("InvalidateRect")
 	procSetClassLongPtrW      = moduser32.NewProc("SetClassLongPtrW")
-	procGetClassLongPtrW      = moduser32.NewProc("GetClassLongPtrW")
-	procSetWindowPos          = moduser32.NewProc("SetWindowPos")
 )
 
 var currentBrush uintptr
@@ -42,7 +39,6 @@ var currentBrush uintptr
 func init() {
 	if err := procSetClassLongPtrW.Find(); err != nil {
 		procSetClassLongPtrW = moduser32.NewProc("SetClassLongW")
-		procGetClassLongPtrW = moduser32.NewProc("GetClassLongW")
 	}
 }
 
@@ -88,7 +84,7 @@ func SetWindowDarkMode(hwnd uintptr, isDark bool) {
 
 func EraseWindowBackground(hwnd uintptr, hdc uintptr) {
 	var rc w32.Rect
-	_, _, _ = procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+	_, _, _ = w32.User32GetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 
 	brush := currentBrush
 	if brush == 0 {
@@ -120,7 +116,7 @@ func RedrawWindowFrame(hwnd uintptr) {
 	if hwnd == 0 {
 		return
 	}
-	_, _, _ = procSetWindowPos.Call(
+	_, _, _ = w32.User32SetWindowPos.Call(
 		hwnd, 0,
 		0, 0, 0, 0,
 		uintptr(swpFrameChangedFlags),
