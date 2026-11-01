@@ -205,7 +205,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 || controller == nil {
+	if int32(res) < 0 || controller == nil {
 		log.Printf("Creating controller failed with %08x", res)
 		atomic.StoreUintptr(&e.initFailed, 1)
 		atomic.StoreUintptr(&e.inited, 1)
