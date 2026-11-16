@@ -425,9 +425,6 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	setWindowContext(w.hwnd, w)
 	edge.ApplyTheme(w.hwnd, isDark)
 
-	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
-	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-
 	if !w.browser.Embed(w.hwnd) {
 		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
 		setWindowContext(w.hwnd, nil)
@@ -438,16 +435,52 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	w.browser.Resize()
 	_ = w.browser.NotifyParentWindowPositionChanged()
 
-	_, _, _ = w32.User32SetWindowPos.Call(
-		w.hwnd, 0,
-		uintptr(int32(targetX)), uintptr(int32(targetY)),
-		uintptr(windowWidth), uintptr(windowHeight),
-		w32.SWPNoZOrder|w32.SWPFrameChanged,
-	)
-
-	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+	w.showWindowAtFront(targetX, targetY, int(windowWidth), int(windowHeight))
 
 	return true
+}
+
+func (w *webview) showWindowAtFront(x, y, width, height int) {
+	if w.hwnd == 0 {
+		return
+	}
+
+	_, _, _ = w32.User32SetWindowPos.Call(
+		w.hwnd, w32.HWNDTopMost,
+		uintptr(int32(x)), uintptr(int32(y)),
+		uintptr(width), uintptr(height),
+		w32.SWPFrameChanged|w32.SWPNoActivate,
+	)
+	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
+	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+
+	_, _, _ = w32.User32SetWindowPos.Call(
+		w.hwnd, w32.HWNDNoTopMost,
+		0, 0, 0, 0,
+		w32.SWPNoMove|w32.SWPNoSize|w32.SWPNoActivate,
+	)
+
+	if !w.autofocus {
+		return
+	}
+
+	_, _, _ = w32.User32BringWindowToTop.Call(w.hwnd)
+	if ret, _, _ := w32.User32SetForegroundWindow.Call(w.hwnd); ret == 0 {
+		fgHwnd, _, _ := w32.User32GetForegroundWindow.Call()
+		if fgHwnd != 0 && fgHwnd != w.hwnd {
+			fgTid, _, _ := w32.User32GetWindowThreadProcessId.Call(fgHwnd, 0)
+			if fgTid != 0 && fgTid != w.mainthread {
+				if attached, _, _ := w32.User32AttachThreadInput.Call(w.mainthread, fgTid, 1); attached != 0 {
+					_, _, _ = w32.User32BringWindowToTop.Call(w.hwnd)
+					_, _, _ = w32.User32SetForegroundWindow.Call(w.hwnd)
+					_, _, _ = w32.User32AttachThreadInput.Call(w.mainthread, fgTid, 0)
+				}
+			}
+		}
+	}
+
+	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+	w.browser.Focus()
 }
 
 func (w *webview) Destroy() {
