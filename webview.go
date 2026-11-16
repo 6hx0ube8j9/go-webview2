@@ -433,9 +433,6 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 		return false
 	}
 
-	w.browser.Resize()
-	_ = w.browser.NotifyParentWindowPositionChanged()
-
 	w.showWindowAtFront(targetX, targetY, int(windowWidth), int(windowHeight))
 
 	return true
