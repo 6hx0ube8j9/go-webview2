@@ -18,32 +18,37 @@ var (
 	shlwapi                  = windows.NewLazySystemDLL("shlwapi")
 	shlwapiSHCreateMemStream = shlwapi.NewProc("SHCreateMemStream")
 
-	user32                   = windows.NewLazySystemDLL("user32")
-	User32LoadImageW         = user32.NewProc("LoadImageW")
-	User32GetSystemMetrics   = user32.NewProc("GetSystemMetrics")
-	User32RegisterClassExW   = user32.NewProc("RegisterClassExW")
-	User32CreateWindowExW    = user32.NewProc("CreateWindowExW")
-	User32DestroyWindow      = user32.NewProc("DestroyWindow")
-	User32ShowWindow         = user32.NewProc("ShowWindow")
-	User32UpdateWindow       = user32.NewProc("UpdateWindow")
-	User32SetFocus           = user32.NewProc("SetFocus")
-	User32GetMessageW        = user32.NewProc("GetMessageW")
-	User32TranslateMessage   = user32.NewProc("TranslateMessage")
-	User32DispatchMessageW   = user32.NewProc("DispatchMessageW")
-	User32DefWindowProcW     = user32.NewProc("DefWindowProcW")
-	User32GetClientRect      = user32.NewProc("GetClientRect")
-	User32PostQuitMessage    = user32.NewProc("PostQuitMessage")
-	User32PostMessageW       = user32.NewProc("PostMessageW")
-	User32SetWindowTextW     = user32.NewProc("SetWindowTextW")
-	User32PostThreadMessageW = user32.NewProc("PostThreadMessageW")
-	User32GetWindowLongW     = user32.NewProc("GetWindowLongW")
-	User32GetWindowLongPtrW  = user32.NewProc("GetWindowLongPtrW")
-	User32SetWindowLongW     = user32.NewProc("SetWindowLongW")
-	User32SetWindowLongPtrW  = user32.NewProc("SetWindowLongPtrW")
-	User32AdjustWindowRect   = user32.NewProc("AdjustWindowRect")
-	User32SetWindowPos       = user32.NewProc("SetWindowPos")
-	User32IsDialogMessage    = user32.NewProc("IsDialogMessage")
-	User32GetAncestor        = user32.NewProc("GetAncestor")
+	user32                         = windows.NewLazySystemDLL("user32")
+	User32LoadImageW               = user32.NewProc("LoadImageW")
+	User32GetSystemMetrics         = user32.NewProc("GetSystemMetrics")
+	User32RegisterClassExW         = user32.NewProc("RegisterClassExW")
+	User32CreateWindowExW          = user32.NewProc("CreateWindowExW")
+	User32DestroyWindow            = user32.NewProc("DestroyWindow")
+	User32ShowWindow               = user32.NewProc("ShowWindow")
+	User32UpdateWindow             = user32.NewProc("UpdateWindow")
+	User32SetFocus                 = user32.NewProc("SetFocus")
+	User32BringWindowToTop         = user32.NewProc("BringWindowToTop")
+	User32SetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	User32GetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	User32GetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	User32AttachThreadInput        = user32.NewProc("AttachThreadInput")
+	User32GetMessageW              = user32.NewProc("GetMessageW")
+	User32TranslateMessage         = user32.NewProc("TranslateMessage")
+	User32DispatchMessageW         = user32.NewProc("DispatchMessageW")
+	User32DefWindowProcW           = user32.NewProc("DefWindowProcW")
+	User32GetClientRect            = user32.NewProc("GetClientRect")
+	User32PostQuitMessage          = user32.NewProc("PostQuitMessage")
+	User32PostMessageW             = user32.NewProc("PostMessageW")
+	User32SetWindowTextW           = user32.NewProc("SetWindowTextW")
+	User32PostThreadMessageW       = user32.NewProc("PostThreadMessageW")
+	User32GetWindowLongW           = user32.NewProc("GetWindowLongW")
+	User32GetWindowLongPtrW        = user32.NewProc("GetWindowLongPtrW")
+	User32SetWindowLongW           = user32.NewProc("SetWindowLongW")
+	User32SetWindowLongPtrW        = user32.NewProc("SetWindowLongPtrW")
+	User32AdjustWindowRect         = user32.NewProc("AdjustWindowRect")
+	User32SetWindowPos             = user32.NewProc("SetWindowPos")
+	User32IsDialogMessage          = user32.NewProc("IsDialogMessage")
+	User32GetAncestor              = user32.NewProc("GetAncestor")
 )
 
 const (
@@ -77,9 +82,15 @@ const (
 )
 
 const (
+	HWNDTopMost   = ^uintptr(0) // -1
+	HWNDNoTopMost = ^uintptr(1) // -2
+)
+
+const (
+	SWPNoSize       = 0x0001
+	SWPNoMove       = 0x0002
 	SWPNoZOrder     = 0x0004
 	SWPNoActivate   = 0x0010
-	SWPNoMove       = 0x0002
 	SWPFrameChanged = 0x0020
 )
 
