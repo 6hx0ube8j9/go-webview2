@@ -42,6 +42,7 @@ func setWindowContext(wnd uintptr, data interface{}) {
 
 type browser interface {
 	Embed(hwnd uintptr) bool
+	Show() error
 	Resize()
 	Navigate(url string)
 	NavigateToString(htmlContent string)
@@ -452,8 +453,12 @@ func (w *webview) showWindowAtFront(x, y, width, height int) {
 		w32.SWPFrameChanged|w32.SWPNoActivate,
 	)
 	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
-	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
 
+	_ = w.browser.Show()
+	w.browser.Resize()
+	_ = w.browser.NotifyParentWindowPositionChanged()
+	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+	
 	_, _, _ = w32.User32SetWindowPos.Call(
 		w.hwnd, w32.HWNDNoTopMost,
 		0, 0, 0, 0,
