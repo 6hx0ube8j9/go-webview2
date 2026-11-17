@@ -1,6 +1,9 @@
 package webview2
 
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // This is copied from webview/webview.
 // The documentation is included for convenience.
@@ -90,4 +93,27 @@ type WebView interface {
 	// The handler should return true if the request is handled by the application,
 	// or false to let the library open the URL in the system's default browser.
 	SetNewWindowHandler(handler func(url string) bool)
+
+	// SetProcessFailedHandler registers a callback invoked when a WebView2 sub-process exits or crashes.
+	SetProcessFailedHandler(handler func(event ProcessFailedEvent))
+}
+
+// ProcessFailedEvent describes a WebView2 sub-process crash or unexpected termination.
+type ProcessFailedEvent struct {
+	Kind        uint32
+	KindText    string
+	Reason      uint32
+	ReasonText  string
+	ExitCode    int32
+	Description string
+	IsFatal     bool
+	Summary     string
+}
+
+// Err returns a formatted error ready for downstream logging.
+func (e ProcessFailedEvent) Err() error {
+	if e.Summary != "" {
+		return errors.New(e.Summary)
+	}
+	return errors.New("webview2 process failed: " + e.KindText)
 }

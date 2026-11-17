@@ -42,6 +42,7 @@ func setWindowContext(wnd uintptr, data interface{}) {
 
 type browser interface {
 	Embed(hwnd uintptr) bool
+	EmbedWithError(hwnd uintptr) error
 	Show() error
 	Resize()
 	Navigate(url string)
@@ -53,16 +54,17 @@ type browser interface {
 }
 
 type webview struct {
-	hwnd             uintptr
-	mainthread       uintptr
-	browser          browser
-	autofocus        bool
-	maxsz            w32.Point
-	minsz            w32.Point
-	m                sync.Mutex
-	bindings         map[string]interface{}
-	dispatchq        []func()
-	newWindowHandler func(url string) bool
+	hwnd                 uintptr
+	mainthread           uintptr
+	browser              browser
+	autofocus            bool
+	maxsz                w32.Point
+	minsz                w32.Point
+	m                    sync.Mutex
+	bindings             map[string]interface{}
+	dispatchq            []func()
+	newWindowHandler     func(url string) bool
+	processFailedHandler func(event ProcessFailedEvent)
 }
 
 type WindowOptions struct {
@@ -105,6 +107,16 @@ func NewWindow(debug bool, window unsafe.Pointer) WebView {
 
 // NewWithOptions creates a new webview using the provided options.
 func NewWithOptions(options WebViewOptions) WebView {
+	w, err := NewWithOptionsE(options)
+	if err != nil {
+		log.Printf("WebView2 initialization failed: %v", err)
+		return nil
+	}
+	return w
+}
+
+// NewWithOptionsE creates a new webview and returns a structured error (including Win32 HRESULT) on failure.
+func NewWithOptionsE(options WebViewOptions) (WebView, error) {
 	runtime.LockOSThread()
 
 	const coinitApartmentThreaded = 2
@@ -144,29 +156,54 @@ func NewWithOptions(options WebViewOptions) WebView {
 		_ = edge.OpenDefaultBrowser(w.hwnd, uri)
 	}
 
+	chromium.ProcessFailedCallback = func(info edge.ProcessFailedInfo) {
+		w.m.Lock()
+		handler := w.processFailedHandler
+		w.m.Unlock()
+
+		if handler != nil {
+			handler(ProcessFailedEvent{
+				Kind:        uint32(info.Kind),
+				KindText:    info.Kind.String(),
+				Reason:      uint32(info.Reason),
+				ReasonText:  info.Reason.String(),
+				ExitCode:    info.ExitCode,
+				Description: info.Description,
+				IsFatal:     info.IsFatal,
+				Summary:     info.String(),
+			})
+		}
+	}
+
 	w.browser = chromium
 	w.mainthread, _, _ = w32.Kernel32GetCurrentThreadID.Call()
-	if !w.CreateWithOptions(options.WindowOptions) {
+	if err := w.createWithOptionsE(options.WindowOptions); err != nil {
 		runtime.UnlockOSThread()
-		return nil
+		return nil, err
+	}
+
+	cleanupOnErr := func() {
+		if w.hwnd != 0 {
+			_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
+		}
+		runtime.UnlockOSThread()
 	}
 
 	settings, err := chromium.GetSettings()
 	if err != nil {
-		log.Fatal(err)
+		cleanupOnErr()
+		return nil, err
 	}
-	// disable context menu
-	err = settings.PutAreDefaultContextMenusEnabled(options.Debug)
-	if err != nil {
-		log.Fatal(err)
+	if err := settings.PutAreDefaultContextMenusEnabled(options.Debug); err != nil {
+		cleanupOnErr()
+		return nil, err
 	}
-	// disable developer tools
-	err = settings.PutAreDevToolsEnabled(options.Debug)
-	if err != nil {
-		log.Fatal(err)
+	if err := settings.PutAreDevToolsEnabled(options.Debug); err != nil {
+		cleanupOnErr()
+		return nil, err
 	}
 
-	return w
+	return w, nil
 }
 
 type rpcMessage struct {
@@ -270,7 +307,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	if w, ok := getWindowContext(hwnd).(*webview); ok {
 		switch msg {
 		case w32.WMDPIChanged:
-			suggestedRect := (*w32.Rect)(unsafe.Pointer(lp))
+			suggestedRect := *(**w32.Rect)(unsafe.Pointer(&lp))
 			newWidth := suggestedRect.Right - suggestedRect.Left
 			newHeight := suggestedRect.Bottom - suggestedRect.Top
 
@@ -335,7 +372,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			return 0
 
 		case w32.WMGetMinMaxInfo:
-			lpmmi := (*w32.MinMaxInfo)(unsafe.Pointer(lp))
+			lpmmi := *(**w32.MinMaxInfo)(unsafe.Pointer(&lp))
 			if w.maxsz.X > 0 && w.maxsz.Y > 0 {
 				lpmmi.PtMaxSize = w.maxsz
 				lpmmi.PtMaxTrackSize = w.maxsz
@@ -359,6 +396,10 @@ func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
 }
 
 func (w *webview) CreateWithOptions(opts WindowOptions) bool {
+	return w.createWithOptionsE(opts) == nil
+}
+
+func (w *webview) createWithOptionsE(opts WindowOptions) error {
 	isDark := opts.DarkMode
 
 	var hinstance windows.Handle
@@ -426,16 +467,22 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	setWindowContext(w.hwnd, w)
 	edge.ApplyTheme(w.hwnd, isDark)
 
-	if !w.browser.Embed(w.hwnd) {
+	if err := w.browser.EmbedWithError(w.hwnd); err != nil {
 		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
 		setWindowContext(w.hwnd, nil)
 		w.hwnd = 0
-		return false
+		return err
 	}
 
 	w.showWindowAtFront(targetX, targetY, int(windowWidth), int(windowHeight))
 
-	return true
+	return nil
+}
+
+func (w *webview) SetProcessFailedHandler(handler func(event ProcessFailedEvent)) {
+	w.m.Lock()
+	defer w.m.Unlock()
+	w.processFailedHandler = handler
 }
 
 func (w *webview) showWindowAtFront(x, y, width, height int) {
@@ -455,7 +502,7 @@ func (w *webview) showWindowAtFront(x, y, width, height int) {
 	w.browser.Resize()
 	_ = w.browser.NotifyParentWindowPositionChanged()
 	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
-	
+
 	_, _, _ = w32.User32SetWindowPos.Call(
 		w.hwnd, w32.HWNDNoTopMost,
 		0, 0, 0, 0,
@@ -486,6 +533,9 @@ func (w *webview) showWindowAtFront(x, y, width, height int) {
 }
 
 func (w *webview) Destroy() {
+	if w.hwnd == 0 {
+		return
+	}
 	_, _, _ = w32.User32PostMessageW.Call(w.hwnd, w32.WMClose, 0, 0)
 }
 
@@ -526,7 +576,7 @@ func (w *webview) Terminate() {
 }
 
 func (w *webview) Window() unsafe.Pointer {
-	return unsafe.Pointer(w.hwnd)
+	return *(*unsafe.Pointer)(unsafe.Pointer(&w.hwnd))
 }
 
 func (w *webview) Navigate(url string) {

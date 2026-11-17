@@ -27,10 +27,11 @@ func allocCoTaskMemString(str string) (*uint16, uintptr) {
 		return nil, 0x8007000E // E_OUTOFMEMORY
 	}
 
-	dst := (*[1 << 20]uint16)(unsafe.Pointer(mem))[:len(utf16Chars):len(utf16Chars)]
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&mem))
+	dst := (*[1 << 20]uint16)(ptr)[:len(utf16Chars):len(utf16Chars)]
 	copy(dst, utf16Chars)
 
-	return (*uint16)(unsafe.Pointer(mem)), 0 // S_OK
+	return (*uint16)(ptr), 0 // S_OK
 }
 
 type CoreWebView2EnvironmentOptions struct {
