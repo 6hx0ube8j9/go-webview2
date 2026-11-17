@@ -118,11 +118,3 @@ func (e ProcessFailedEvent) Err() error {
 	return errors.New("webview2 process failed: " + e.KindText)
 }
 
-// HRESULTCode extracts the underlying Win32/COM HRESULT code from an error if available.
-func HRESULTCode(err error) (uint32, bool) {
-	var hrErr *edge.HRESULTError
-	if errors.As(err, &hrErr) {
-		return hrErr.Code, true
-	}
-	return 0, false
-}
