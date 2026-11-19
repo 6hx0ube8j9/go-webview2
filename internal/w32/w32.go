@@ -11,6 +11,8 @@ import (
 var (
 	ole32               = windows.NewLazySystemDLL("ole32")
 	Ole32CoInitializeEx = ole32.NewProc("CoInitializeEx")
+	Ole32CoUninitialize = ole32.NewProc("CoUninitialize")
+	Ole32CoTaskMemAlloc = ole32.NewProc("CoTaskMemAlloc")
 
 	kernel32                   = windows.NewLazySystemDLL("kernel32")
 	Kernel32GetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
@@ -37,6 +39,10 @@ var (
 	User32DispatchMessageW         = user32.NewProc("DispatchMessageW")
 	User32DefWindowProcW           = user32.NewProc("DefWindowProcW")
 	User32GetClientRect            = user32.NewProc("GetClientRect")
+	User32FillRect                 = user32.NewProc("FillRect")
+	User32InvalidateRect           = user32.NewProc("InvalidateRect")
+	User32SetClassLongW            = user32.NewProc("SetClassLongW")
+	User32SetClassLongPtrW         = user32.NewProc("SetClassLongPtrW")
 	User32PostQuitMessage          = user32.NewProc("PostQuitMessage")
 	User32PostMessageW             = user32.NewProc("PostMessageW")
 	User32SetWindowTextW           = user32.NewProc("SetWindowTextW")
@@ -101,10 +107,13 @@ const (
 	WMActivate      = 0x0006
 	WMClose         = 0x0010
 	WMQuit          = 0x0012
+	WMEraseBkgnd    = 0x0014
+	WMSettingChange = 0x001A
 	WMGetMinMaxInfo = 0x0024
 	WMNCLButtonDown = 0x00A1
 	WMMoving        = 0x0216
 	WMDPIChanged    = 0x02E0
+	WMThemeChanged  = 0x031A
 	WMApp           = 0x8000
 )
 

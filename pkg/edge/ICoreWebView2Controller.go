@@ -39,8 +39,21 @@ type ICoreWebView2Controller struct {
 }
 
 func (i *ICoreWebView2Controller) AddRef() uintptr {
-	r, _, _ := i.vtbl.AddRef.Call()
+	r, _, _ := i.vtbl.AddRef.Call(uintptr(unsafe.Pointer(i)))
 	return r
+}
+
+func (i *ICoreWebView2Controller) Release() uintptr {
+	r, _, _ := i.vtbl.Release.Call(uintptr(unsafe.Pointer(i)))
+	return r
+}
+
+func (i *ICoreWebView2Controller) Close() error {
+	hr, _, _ := i.vtbl.Close.Call(uintptr(unsafe.Pointer(i)))
+	if int32(hr) < 0 {
+		return newHRESULTError("Controller.Close", hr, nil)
+	}
+	return nil
 }
 
 func (i *ICoreWebView2Controller) GetBounds() (*w32.Rect, error) {
@@ -74,7 +87,7 @@ func (i *ICoreWebView2Controller) AddAcceleratorKeyPressed(eventHandler *ICoreWe
 	_, _, err = i.vtbl.AddAcceleratorKeyPressed.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(unsafe.Pointer(eventHandler)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(token)),
 	)
 	if err != windows.ERROR_SUCCESS {
 		return err
@@ -96,15 +109,17 @@ func (i *ICoreWebView2Controller) PutIsVisible(isVisible bool) error {
 }
 
 func (i *ICoreWebView2Controller) GetICoreWebView2Controller2() *ICoreWebView2Controller2 {
-
 	var result *ICoreWebView2Controller2
 
 	iidICoreWebView2Controller2 := NewGUID("{c979903e-d4ca-4228-92eb-47ee3fa96eab}")
-	_, _, _ = i.vtbl.QueryInterface.Call(
+	hr, _, _ := i.vtbl.QueryInterface.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(unsafe.Pointer(iidICoreWebView2Controller2)),
-		uintptr(unsafe.Pointer(&result)))
-
+		uintptr(unsafe.Pointer(&result)),
+	)
+	if int32(hr) < 0 {
+		return nil
+	}
 	return result
 }
 

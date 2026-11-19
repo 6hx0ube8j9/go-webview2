@@ -17,23 +17,31 @@ import (
 
 type Chromium struct {
 	AdditionalBrowserArguments string
-	environmentOptions        *CoreWebView2EnvironmentOptions
-	hwnd                  uintptr
-	focusOnInit           bool
-	controller            *ICoreWebView2Controller
-	webview               *ICoreWebView2
-	inited                uintptr
-	initFailed            uintptr
-	lastErr               error
-	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
-	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
-	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
-	permissionRequested   *iCoreWebView2PermissionRequestedEventHandler
-	webResourceRequested  *iCoreWebView2WebResourceRequestedEventHandler
-	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
-	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
-	newWindowRequested    *iCoreWebView2NewWindowRequestedEventHandler
-	processFailed         *ICoreWebView2ProcessFailedEventHandler
+	environmentOptions         *CoreWebView2EnvironmentOptions
+	hwnd                       uintptr
+	focusOnInit                bool
+	controller                 *ICoreWebView2Controller
+	webview                    *ICoreWebView2
+	inited                     uintptr
+	initFailed                 uintptr
+	lastErr                    error
+	envCompleted               *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
+	controllerCompleted        *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
+	webMessageReceived         *iCoreWebView2WebMessageReceivedEventHandler
+	permissionRequested        *iCoreWebView2PermissionRequestedEventHandler
+	webResourceRequested       *iCoreWebView2WebResourceRequestedEventHandler
+	acceleratorKeyPressed      *ICoreWebView2AcceleratorKeyPressedEventHandler
+	navigationCompleted        *ICoreWebView2NavigationCompletedEventHandler
+	newWindowRequested         *iCoreWebView2NewWindowRequestedEventHandler
+	processFailed              *ICoreWebView2ProcessFailedEventHandler
+
+	webMessageToken     _EventRegistrationToken
+	permissionToken     _EventRegistrationToken
+	webResourceToken    _EventRegistrationToken
+	navigationToken     _EventRegistrationToken
+	newWindowToken      _EventRegistrationToken
+	processFailedToken  _EventRegistrationToken
+	acceleratorKeyToken _EventRegistrationToken
 
 	environment *ICoreWebView2Environment
 
@@ -41,7 +49,7 @@ type Chromium struct {
 	DataPath string
 	DarkMode bool
 
-	// Permissions
+	// permissions
 	permissions      map[CoreWebView2PermissionKind]CoreWebView2PermissionState
 	globalPermission *CoreWebView2PermissionState
 
@@ -56,6 +64,17 @@ type Chromium struct {
 
 func NewChromium() *Chromium {
 	e := &Chromium{}
+	/*
+	 All these handlers are passed to native code through syscalls with 'uintptr(unsafe.Pointer(handler))' and we know
+	 that a pointer to those will be kept in the native code. Furthermore these handlers als contain pointer to other Go
+	 structs like the vtable.
+	 This violates the unsafe.Pointer rule '(4) Conversion of a Pointer to a uintptr when calling syscall.Syscall.' because
+	 theres no guarantee that Go doesn't move these objects.
+	 AFAIK currently the Go runtime doesn't move HEAP objects, so we should be safe with these handlers. But they don't
+	 guarantee it, because in the future Go might use a compacting GC.
+	 There's a proposal to add a runtime.Pin function, to prevent moving pinned objects, which would allow to easily fix
+	 this issue by just pinning the handlers. The https://go-review.googlesource.com/c/go/+/367296/ should land in Go 1.19.
+	*/
 	e.envCompleted = newICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler(e)
 	e.controllerCompleted = newICoreWebView2CreateCoreWebView2ControllerCompletedHandler(e)
 	e.webMessageReceived = newICoreWebView2WebMessageReceivedEventHandler(e)
@@ -71,12 +90,14 @@ func NewChromium() *Chromium {
 }
 
 func (e *Chromium) Embed(hwnd uintptr) bool {
-	return e.EmbedWithError(hwnd) == nil
+	return e.EmbedErr(hwnd) == nil
 }
 
-func (e *Chromium) EmbedWithError(hwnd uintptr) error {
+func (e *Chromium) EmbedErr(hwnd uintptr) error {
 	e.hwnd = hwnd
 	e.lastErr = nil
+	atomic.StoreUintptr(&e.inited, 0)
+	atomic.StoreUintptr(&e.initFailed, 0)
 
 	dataPath := e.DataPath
 	if dataPath == "" {
@@ -116,7 +137,7 @@ func (e *Chromium) EmbedWithError(hwnd uintptr) error {
 			0,
 			0,
 		)
-		if r == 0 {
+		if int32(r) <= 0 {
 			break
 		}
 		_, _, _ = w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
@@ -132,6 +153,57 @@ func (e *Chromium) EmbedWithError(hwnd uintptr) error {
 
 	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
 	return nil
+}
+
+func removeEventToken(proc ComProc, obj uintptr, token _EventRegistrationToken) {
+	if token.Value == 0 {
+		return
+	}
+	if unsafe.Sizeof(uintptr(0)) == 4 {
+		lo := uintptr(uint32(token.Value))
+		hi := uintptr(uint32(uint64(token.Value) >> 32))
+		_, _, _ = proc.Call(obj, lo, hi)
+		return
+	}
+	_, _, _ = proc.Call(obj, uintptr(token.Value))
+}
+
+// Close detaches event handlers, closes the WebView2 controller, and releases COM references.
+// Must be called on the UI thread; safe to call multiple times.
+func (e *Chromium) Close() {
+	if e.webview != nil {
+		wv := uintptr(unsafe.Pointer(e.webview))
+		removeEventToken(e.webview.vtbl.RemoveWebMessageReceived, wv, e.webMessageToken)
+		removeEventToken(e.webview.vtbl.RemovePermissionRequested, wv, e.permissionToken)
+		removeEventToken(e.webview.vtbl.RemoveWebResourceRequested, wv, e.webResourceToken)
+		removeEventToken(e.webview.vtbl.RemoveNavigationCompleted, wv, e.navigationToken)
+		removeEventToken(e.webview.vtbl.RemoveNewWindowRequested, wv, e.newWindowToken)
+		removeEventToken(e.webview.vtbl.RemoveProcessFailed, wv, e.processFailedToken)
+		e.webMessageToken = _EventRegistrationToken{}
+		e.permissionToken = _EventRegistrationToken{}
+		e.webResourceToken = _EventRegistrationToken{}
+		e.navigationToken = _EventRegistrationToken{}
+		e.newWindowToken = _EventRegistrationToken{}
+		e.processFailedToken = _EventRegistrationToken{}
+	}
+	if e.controller != nil {
+		removeEventToken(e.controller.vtbl.RemoveAcceleratorKeyPressed, uintptr(unsafe.Pointer(e.controller)), e.acceleratorKeyToken)
+		e.acceleratorKeyToken = _EventRegistrationToken{}
+		_ = e.controller.Close()
+	}
+	if e.webview != nil {
+		_, _, _ = e.webview.vtbl.Release.Call(uintptr(unsafe.Pointer(e.webview)))
+		e.webview = nil
+	}
+	if e.controller != nil {
+		e.controller.Release()
+		e.controller = nil
+	}
+	if e.environment != nil {
+		_, _, _ = e.environment.vtbl.Release.Call(uintptr(unsafe.Pointer(e.environment)))
+		e.environment = nil
+	}
+	e.environmentOptions = nil
 }
 
 func (e *Chromium) Navigate(url string) {
@@ -238,17 +310,12 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		atomic.StoreUintptr(&e.inited, 1)
 		return 0
 	}
-	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
+	controller.AddRef()
 	e.controller = controller
 
-	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(controller))
-	if e.DarkMode {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
-	} else {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
-	}
+	e.SetDarkMode(e.DarkMode)
 
-	var token _EventRegistrationToken
+	// GetCoreWebView2 returns an already AddRef'd [out] interface pointer.
 	hr, _, _ := controller.vtbl.GetCoreWebView2.Call(
 		uintptr(unsafe.Pointer(controller)),
 		uintptr(unsafe.Pointer(&e.webview)),
@@ -260,40 +327,37 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		return 0
 	}
 
-	_, _, _ = e.webview.vtbl.AddRef.Call(
-		uintptr(unsafe.Pointer(e.webview)),
-	)
 	_, _, _ = e.webview.vtbl.AddWebMessageReceived.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.webMessageReceived)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.webMessageToken)),
 	)
 	_, _, _ = e.webview.vtbl.AddPermissionRequested.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.permissionRequested)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.permissionToken)),
 	)
 	_, _, _ = e.webview.vtbl.AddWebResourceRequested.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.webResourceRequested)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.webResourceToken)),
 	)
 	_, _, _ = e.webview.vtbl.AddNavigationCompleted.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.navigationCompleted)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.navigationToken)),
 	)
 	_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.newWindowRequested)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.newWindowToken)),
 	)
 	_, _, _ = e.webview.vtbl.AddProcessFailed.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.processFailed)),
-		uintptr(unsafe.Pointer(&token)),
+		uintptr(unsafe.Pointer(&e.processFailedToken)),
 	)
-	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
+	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &e.acceleratorKeyToken)
 
 	atomic.StoreUintptr(&e.inited, 1)
 
@@ -333,7 +397,7 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 	var kind CoreWebView2PermissionKind
 	_, _, _ = args.vtbl.GetPermissionKind.Call(
 		uintptr(unsafe.Pointer(args)),
-		uintptr(kind),
+		uintptr(unsafe.Pointer(&kind)),
 	)
 	var result CoreWebView2PermissionState
 	if e.globalPermission != nil {
@@ -377,6 +441,9 @@ func (e *Chromium) Environment() *ICoreWebView2Environment {
 	return e.environment
 }
 
+// AcceleratorKeyPressed is called when an accelerator key is pressed.
+// If the AcceleratorKeyCallback method has been set, it will defer handling of the keypress
+// to the callback. That callback returns a bool indicating if the event was handled.
 func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *ICoreWebView2AcceleratorKeyPressedEventArgs) uintptr {
 	if e.AcceleratorKeyCallback == nil {
 		return 0
@@ -424,7 +491,7 @@ func (e *Chromium) ProcessFailed(_ *ICoreWebView2, args *ICoreWebView2ProcessFai
 	if args == nil {
 		return 0
 	}
-	info := args.ExtractInfo()
+	info := args.Info()
 	if e.ProcessFailedCallback != nil {
 		e.ProcessFailedCallback(info)
 	}
@@ -432,6 +499,8 @@ func (e *Chromium) ProcessFailed(_ *ICoreWebView2, args *ICoreWebView2ProcessFai
 }
 
 func (e *Chromium) NotifyParentWindowPositionChanged() error {
+	// It looks like the wndproc function is called before the controller initialization is complete.
+	// Because of this the controller is nil.
 	if e.controller == nil {
 		return nil
 	}
@@ -453,14 +522,15 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 	return 0
 }
 
-func (e *Chromium) SetBackgroundColor(isDark bool) {
+func (e *Chromium) SetDarkMode(isDark bool) {
+	e.DarkMode = isDark
 	if e.controller == nil {
 		return
 	}
-	ctrl2 := (*ICoreWebView2Controller2)(unsafe.Pointer(e.controller))
-	if isDark {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 32, G: 32, B: 32})
-	} else {
-		_ = ctrl2.PutDefaultBackgroundColor(COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
+	ctrl2 := e.controller.GetICoreWebView2Controller2()
+	if ctrl2 == nil {
+		return
 	}
+	defer ctrl2.vtbl.Release.Call(uintptr(unsafe.Pointer(ctrl2)))
+	_ = ctrl2.PutDefaultBackgroundColor(themeBackgroundColor(isDark))
 }

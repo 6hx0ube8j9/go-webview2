@@ -5,6 +5,7 @@ package edge
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -17,15 +18,19 @@ var (
 )
 
 func OpenDefaultBrowser(hwnd uintptr, targetURL string) error {
-	lower := strings.ToLower(strings.TrimSpace(targetURL))
+	trimmed := strings.TrimSpace(targetURL)
+	lower := strings.ToLower(trimmed)
 	if !strings.HasPrefix(lower, "http://") &&
 		!strings.HasPrefix(lower, "https://") &&
 		!strings.HasPrefix(lower, "mailto:") {
 		return errors.New("blocked unsafe URL scheme")
 	}
 
-	verb, _ := windows.UTF16PtrFromString("open")
-	target, err := windows.UTF16PtrFromString(targetURL)
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	target, err := windows.UTF16PtrFromString(trimmed)
 	if err != nil {
 		return err
 	}
@@ -39,12 +44,12 @@ func OpenDefaultBrowser(hwnd uintptr, targetURL string) error {
 		1, // SW_SHOWNORMAL
 	)
 	if ret <= 32 {
-		return windows.GetLastError()
+		return fmt.Errorf("ShellExecuteW failed with code %d", ret)
 	}
 	return nil
 }
 
-// ==================== ICoreWebView2NewWindowRequestedEventArgs ====================
+// ICoreWebView2NewWindowRequestedEventArgs
 
 type iCoreWebView2NewWindowRequestedEventArgsVtbl struct {
 	_IUnknownVtbl
@@ -79,13 +84,9 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) GetUri() (string, error) {
 }
 
 func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) error {
-	var h int32 = 0
-	if handled {
-		h = 1
-	}
 	r, _, _ := i.vtbl.PutHandled.Call(
 		uintptr(unsafe.Pointer(i)),
-		uintptr(h),
+		uintptr(boolToInt(handled)),
 	)
 	if int32(r) < 0 {
 		return windows.Errno(r)
@@ -93,9 +94,10 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) erro
 	return nil
 }
 
-// ==================== ICoreWebView2NewWindowRequestedEventHandler ====================
+// ICoreWebView2NewWindowRequestedEventHandler
 
 type iCoreWebView2NewWindowRequestedEventHandlerImpl interface {
+	_IUnknownImpl
 	NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr
 }
 
@@ -110,15 +112,15 @@ type iCoreWebView2NewWindowRequestedEventHandler struct {
 }
 
 func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownQueryInterface(this *iCoreWebView2NewWindowRequestedEventHandler, refiid, object uintptr) uintptr {
-	return 0
+	return this.impl.QueryInterface(refiid, object)
 }
 
 func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownAddRef(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
-	return 1
+	return this.impl.AddRef()
 }
 
 func _ICoreWebView2NewWindowRequestedEventHandlerIUnknownRelease(this *iCoreWebView2NewWindowRequestedEventHandler) uintptr {
-	return 1
+	return this.impl.Release()
 }
 
 func _ICoreWebView2NewWindowRequestedEventHandlerInvoke(this *iCoreWebView2NewWindowRequestedEventHandler, sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {

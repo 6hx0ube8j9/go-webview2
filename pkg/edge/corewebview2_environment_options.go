@@ -1,15 +1,16 @@
+//go:build windows
+// +build windows
+
 package edge
 
 import (
 	"unsafe"
 
+	"github.com/jchv/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
 )
 
 var (
-	modOle32           = windows.NewLazySystemDLL("ole32.dll")
-	procCoTaskMemAlloc = modOle32.NewProc("CoTaskMemAlloc")
-
 	iidIUnknown                        = windows.GUID{Data1: 0x00000000, Data2: 0x0000, Data3: 0x0000, Data4: [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
 	iidICoreWebView2EnvironmentOptions = windows.GUID{Data1: 0x2FDE08A8, Data2: 0x1E9A, Data3: 0x4766, Data4: [8]byte{0x8C, 0x05, 0x95, 0xA9, 0xCE, 0xB9, 0xD1, 0xC5}}
 )
@@ -20,9 +21,12 @@ func allocCoTaskMemString(str string) (*uint16, uintptr) {
 	if err != nil {
 		return nil, 0x80004005 // E_FAIL
 	}
+	if len(utf16Chars) > 1<<20 {
+		return nil, 0x80070057 // E_INVALIDARG
+	}
 
 	byteLen := uintptr(len(utf16Chars) * 2)
-	mem, _, _ := procCoTaskMemAlloc.Call(byteLen)
+	mem, _, _ := w32.Ole32CoTaskMemAlloc.Call(byteLen)
 	if mem == 0 {
 		return nil, 0x8007000E // E_OUTOFMEMORY
 	}
@@ -40,41 +44,43 @@ type CoreWebView2EnvironmentOptions struct {
 }
 
 type iCoreWebView2EnvironmentOptionsVtbl struct {
-	QueryInterface                            uintptr
-	AddRef                                    uintptr
-	Release                                   uintptr
-	GetAdditionalBrowserArguments             uintptr
-	PutAdditionalBrowserArguments             uintptr
-	GetLanguage                               uintptr
-	PutLanguage                               uintptr
-	GetTargetCompatibleBrowserVersion         uintptr
-	PutTargetCompatibleBrowserVersion         uintptr
-	GetAllowSingleSignOnUsingOSPrimaryAccount uintptr
-	PutAllowSingleSignOnUsingOSPrimaryAccount uintptr
+	_IUnknownVtbl
+	GetAdditionalBrowserArguments             ComProc
+	PutAdditionalBrowserArguments             ComProc
+	GetLanguage                               ComProc
+	PutLanguage                               ComProc
+	GetTargetCompatibleBrowserVersion         ComProc
+	PutTargetCompatibleBrowserVersion         ComProc
+	GetAllowSingleSignOnUsingOSPrimaryAccount ComProc
+	PutAllowSingleSignOnUsingOSPrimaryAccount ComProc
 }
 
 var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
-	// IUnknown
-	QueryInterface: windows.NewCallback(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
-		if ppvObject == nil {
-			return 0x80004003 // E_POINTER
-		}
-		if *riid == iidIUnknown || *riid == iidICoreWebView2EnvironmentOptions {
-			*ppvObject = this
-			return 0 // S_OK
-		}
-		*ppvObject = nil
-		return 0x80004002 // E_NOINTERFACE
-	}),
-	AddRef: windows.NewCallback(func(this unsafe.Pointer) uintptr {
-		return 1
-	}),
-	Release: windows.NewCallback(func(this unsafe.Pointer) uintptr {
-		return 1
-	}),
+	_IUnknownVtbl: _IUnknownVtbl{
+		QueryInterface: NewComProc(func(this unsafe.Pointer, riid *windows.GUID, ppvObject *unsafe.Pointer) uintptr {
+			if ppvObject == nil {
+				return 0x80004003 // E_POINTER
+			}
+			if riid == nil {
+				*ppvObject = nil
+				return 0x80070057 // E_INVALIDARG
+			}
+			if *riid == iidIUnknown || *riid == iidICoreWebView2EnvironmentOptions {
+				*ppvObject = this
+				return 0 // S_OK
+			}
+			*ppvObject = nil
+			return 0x80004002 // E_NOINTERFACE
+		}),
+		AddRef: NewComProc(func(this unsafe.Pointer) uintptr {
+			return 1
+		}),
+		Release: NewComProc(func(this unsafe.Pointer) uintptr {
+			return 1
+		}),
+	},
 
-	// AdditionalBrowserArguments
-	GetAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
+	GetAdditionalBrowserArguments: NewComProc(func(this unsafe.Pointer, value **uint16) uintptr {
 		if value == nil {
 			return 0x80004003 // E_POINTER
 		}
@@ -90,24 +96,23 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		*value = ptr
 		return 0 // S_OK
 	}),
-	PutAdditionalBrowserArguments: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
+	PutAdditionalBrowserArguments: NewComProc(func(this unsafe.Pointer, value *uint16) uintptr {
 		return 0 // S_OK
 	}),
 
-	// Language
-	GetLanguage: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
+	GetLanguage: NewComProc(func(this unsafe.Pointer, value **uint16) uintptr {
 		if value == nil {
 			return 0x80004003 // E_POINTER
 		}
 		*value = nil
 		return 0 // S_OK
 	}),
-	PutLanguage: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
+	PutLanguage: NewComProc(func(this unsafe.Pointer, value *uint16) uintptr {
 		return 0 // S_OK
 	}),
 
-	// TargetCompatibleBrowserVersion (GA baseline)
-	GetTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value **uint16) uintptr {
+	// TargetCompatibleBrowserVersion (GA baseline required by WebView2Loader)
+	GetTargetCompatibleBrowserVersion: NewComProc(func(this unsafe.Pointer, value **uint16) uintptr {
 		if value == nil {
 			return 0x80004003 // E_POINTER
 		}
@@ -118,19 +123,18 @@ var environmentOptionsVtbl = iCoreWebView2EnvironmentOptionsVtbl{
 		*value = ptr
 		return 0 // S_OK
 	}),
-	PutTargetCompatibleBrowserVersion: windows.NewCallback(func(this unsafe.Pointer, value *uint16) uintptr {
+	PutTargetCompatibleBrowserVersion: NewComProc(func(this unsafe.Pointer, value *uint16) uintptr {
 		return 0 // S_OK
 	}),
 
-	// AllowSingleSignOnUsingOSPrimaryAccount
-	GetAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow *int32) uintptr {
+	GetAllowSingleSignOnUsingOSPrimaryAccount: NewComProc(func(this unsafe.Pointer, allow *int32) uintptr {
 		if allow == nil {
 			return 0x80004003 // E_POINTER
 		}
 		*allow = 0 // FALSE
-		return 0  // S_OK
+		return 0   // S_OK
 	}),
-	PutAllowSingleSignOnUsingOSPrimaryAccount: windows.NewCallback(func(this unsafe.Pointer, allow int32) uintptr {
+	PutAllowSingleSignOnUsingOSPrimaryAccount: NewComProc(func(this unsafe.Pointer, allow int32) uintptr {
 		return 0 // S_OK
 	}),
 }

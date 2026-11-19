@@ -153,9 +153,9 @@ func (i *ICoreWebView2ProcessFailedEventArgs) GetProcessFailedKind() (CoreWebVie
 	return kind, nil
 }
 
-// ExtractInfo reads ProcessFailedKind and queries ICoreWebView2ProcessFailedEventArgs2
+// Info reads ProcessFailedKind and queries ICoreWebView2ProcessFailedEventArgs2
 // for Reason, ExitCode, and ProcessDescription when supported by the runtime.
-func (i *ICoreWebView2ProcessFailedEventArgs) ExtractInfo() ProcessFailedInfo {
+func (i *ICoreWebView2ProcessFailedEventArgs) Info() ProcessFailedInfo {
 	kind, _ := i.GetProcessFailedKind()
 	info := ProcessFailedInfo{
 		Kind: kind,

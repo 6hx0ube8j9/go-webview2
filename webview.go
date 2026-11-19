@@ -6,11 +6,13 @@ package webview2
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/jchv/go-webview2/internal/w32"
@@ -22,6 +24,9 @@ import (
 var (
 	windowContext     = map[uintptr]interface{}{}
 	windowContextSync sync.RWMutex
+
+	registerClassOnce sync.Once
+	wndprocCallback   uintptr
 )
 
 func getWindowContext(wnd uintptr) interface{} {
@@ -42,7 +47,7 @@ func setWindowContext(wnd uintptr, data interface{}) {
 
 type browser interface {
 	Embed(hwnd uintptr) bool
-	EmbedWithError(hwnd uintptr) error
+	EmbedErr(hwnd uintptr) error
 	Show() error
 	Resize()
 	Navigate(url string)
@@ -51,6 +56,8 @@ type browser interface {
 	Eval(script string)
 	NotifyParentWindowPositionChanged() error
 	Focus()
+	SetDarkMode(isDark bool)
+	Close()
 }
 
 type webview struct {
@@ -58,6 +65,9 @@ type webview struct {
 	mainthread           uintptr
 	browser              browser
 	autofocus            bool
+	comInited            bool
+	darkMode             bool
+	customDarkMode       bool
 	maxsz                w32.Point
 	minsz                w32.Point
 	m                    sync.Mutex
@@ -107,7 +117,7 @@ func NewWindow(debug bool, window unsafe.Pointer) WebView {
 
 // NewWithOptions creates a new webview using the provided options.
 func NewWithOptions(options WebViewOptions) WebView {
-	w, err := NewWithOptionsE(options)
+	w, err := NewWithOptionsErr(options)
 	if err != nil {
 		log.Printf("WebView2 initialization failed: %v", err)
 		return nil
@@ -115,16 +125,20 @@ func NewWithOptions(options WebViewOptions) WebView {
 	return w
 }
 
-// NewWithOptionsE creates a new webview and returns a structured error (including Win32 HRESULT) on failure.
-func NewWithOptionsE(options WebViewOptions) (WebView, error) {
+// NewWithOptionsErr creates a new webview and returns a structured error (including Win32 HRESULT) on failure.
+func NewWithOptionsErr(options WebViewOptions) (WebView, error) {
 	runtime.LockOSThread()
 
 	const coinitApartmentThreaded = 2
-	_, _, _ = w32.Ole32CoInitializeEx.Call(0, coinitApartmentThreaded)
+	hr, _, _ := w32.Ole32CoInitializeEx.Call(0, coinitApartmentThreaded)
+	// S_OK (0) or S_FALSE (1) increments the thread's COM init count and must be paired with CoUninitialize.
+	comInited := hr == 0 || hr == 1
 
-	w := &webview{}
-	w.bindings = map[string]interface{}{}
-	w.autofocus = options.AutoFocus
+	w := &webview{
+		bindings:  map[string]interface{}{},
+		autofocus: options.AutoFocus,
+		comInited: comInited,
+	}
 
 	chromium := edge.NewChromium()
 	chromium.MessageCallback = w.msgcb
@@ -153,7 +167,7 @@ func NewWithOptionsE(options WebViewOptions) (WebView, error) {
 			return
 		}
 
-		_ = edge.OpenDefaultBrowser(w.hwnd, uri)
+		_ = edge.OpenDefaultBrowser(atomic.LoadUintptr(&w.hwnd), uri)
 	}
 
 	chromium.ProcessFailedCallback = func(info edge.ProcessFailedInfo) {
@@ -177,16 +191,26 @@ func NewWithOptionsE(options WebViewOptions) (WebView, error) {
 
 	w.browser = chromium
 	w.mainthread, _, _ = w32.Kernel32GetCurrentThreadID.Call()
-	if err := w.createWithOptionsE(options.WindowOptions); err != nil {
-		runtime.UnlockOSThread()
-		return nil, err
-	}
 
 	cleanupOnErr := func() {
-		if w.hwnd != 0 {
-			_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
+		hwnd := atomic.SwapUintptr(&w.hwnd, 0)
+		if hwnd != 0 {
+			setWindowContext(hwnd, nil)
+		}
+		chromium.Close()
+		if hwnd != 0 {
+			_, _, _ = w32.User32DestroyWindow.Call(hwnd)
+		}
+		if w.comInited {
+			_, _, _ = w32.Ole32CoUninitialize.Call()
+			w.comInited = false
 		}
 		runtime.UnlockOSThread()
+	}
+
+	if err := w.createWithOptionsErr(options.WindowOptions); err != nil {
+		cleanupOnErr()
+		return nil, err
 	}
 
 	settings, err := chromium.GetSettings()
@@ -194,11 +218,12 @@ func NewWithOptionsE(options WebViewOptions) (WebView, error) {
 		cleanupOnErr()
 		return nil, err
 	}
-	if err := settings.PutAreDefaultContextMenusEnabled(options.Debug); err != nil {
-		cleanupOnErr()
-		return nil, err
+	err = settings.PutAreDefaultContextMenusEnabled(options.Debug)
+	if err == nil {
+		err = settings.PutAreDevToolsEnabled(options.Debug)
 	}
-	if err := settings.PutAreDevToolsEnabled(options.Debug); err != nil {
+	settings.Release()
+	if err != nil {
 		cleanupOnErr()
 		return nil, err
 	}
@@ -278,9 +303,11 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 	res := v.Call(args)
 	switch len(res) {
 	case 0:
+		// No results from the function, just return nil
 		return nil, nil
 
 	case 1:
+		// One result may be a value, or an error
 		if res[0].Type().Implements(errorType) {
 			if res[0].Interface() != nil {
 				return nil, res[0].Interface().(error)
@@ -290,6 +317,7 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 		return res[0].Interface(), nil
 
 	case 2:
+		// Two results: first one is value, second is error
 		if !res[1].Type().Implements(errorType) {
 			return nil, errors.New("second return value must be an error")
 		}
@@ -305,9 +333,13 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 
 func (w *webview) SetDarkMode(isDark bool) {
 	w.Dispatch(func() {
-		edge.ApplyTheme(w.hwnd, isDark)
-		if browser, ok := w.browser.(*edge.Chromium); ok {
-			browser.SetBackgroundColor(isDark)
+		w.customDarkMode = true
+		w.darkMode = isDark
+		if hwnd := atomic.LoadUintptr(&w.hwnd); hwnd != 0 {
+			edge.ApplyWindowTheme(hwnd, isDark)
+		}
+		if w.browser != nil {
+			w.browser.SetDarkMode(isDark)
 		}
 	})
 }
@@ -334,20 +366,26 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			}
 			return 0
 
-		case 0x0014: // WM_ERASEBKGND
-			edge.EraseWindowBackground(hwnd, wp)
+		case w32.WMEraseBkgnd:
+			edge.EraseWindowBackground(hwnd, wp, w.darkMode)
 			return 1
 
-		case 0x001A, 0x031A: // WM_SETTINGCHANGE, WM_THEMECHANGED
-			isDark := edge.IsSystemDarkMode()
-			edge.ApplyTheme(hwnd, isDark)
-
-			if w.browser != nil {
-				if browser, ok := w.browser.(*edge.Chromium); ok {
-					browser.SetBackgroundColor(isDark)
+		case w32.WMSettingChange, w32.WMThemeChanged:
+			if msg == w32.WMSettingChange {
+				if lp == 0 || w32.Utf16PtrToString(*(**uint16)(unsafe.Pointer(&lp))) != "ImmersiveColorSet" {
+					r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
+					return r
 				}
 			}
-
+			if !w.customDarkMode {
+				if isDark := edge.IsSystemDarkMode(); isDark != w.darkMode {
+					w.darkMode = isDark
+					edge.ApplyWindowTheme(hwnd, isDark)
+					if w.browser != nil {
+						w.browser.SetDarkMode(isDark)
+					}
+				}
+			}
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
 
@@ -355,7 +393,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			_ = w.browser.NotifyParentWindowPositionChanged()
 
 		case w32.WMNCLButtonDown:
-			_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+			_, _, _ = w32.User32SetFocus.Call(hwnd)
 			r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wp, lp)
 			return r
 
@@ -376,7 +414,10 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 
 		case w32.WMDestroy:
 			setWindowContext(hwnd, nil)
-			w.hwnd = 0
+			atomic.StoreUintptr(&w.hwnd, 0)
+			if w.browser != nil {
+				w.browser.Close()
+			}
 			w.Terminate()
 			return 0
 
@@ -401,40 +442,47 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 }
 
 func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
+	// This function signature stopped making sense a long time ago.
+	// It is but legacy cruft at this point.
 	return w.CreateWithOptions(WindowOptions{})
 }
 
 func (w *webview) CreateWithOptions(opts WindowOptions) bool {
-	return w.createWithOptionsE(opts) == nil
+	return w.createWithOptionsErr(opts) == nil
 }
 
-func (w *webview) createWithOptionsE(opts WindowOptions) error {
+func (w *webview) createWithOptionsErr(opts WindowOptions) error {
 	isDark := opts.DarkMode
+	w.darkMode = isDark
 
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
 
-	var icon uintptr
-	if opts.IconId == 0 {
-		icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
-		icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
-		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
-	} else {
-		icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
-	}
-
-	hbrBackground := edge.CreateThemeBrush(isDark)
 	className, _ := windows.UTF16PtrFromString("webview")
-	wc := w32.WndClassExW{
-		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
-		HInstance:     hinstance,
-		LpszClassName: className,
-		HIcon:         windows.Handle(icon),
-		HIconSm:       windows.Handle(icon),
-		HbrBackground: windows.Handle(hbrBackground),
-		LpfnWndProc:   windows.NewCallback(wndproc),
-	}
-	_, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	registerClassOnce.Do(func() {
+		var icon uintptr
+		if opts.IconId == 0 {
+			// load default icon
+			icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
+			icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
+			icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
+		} else {
+			// load icon from resource
+			icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
+		}
+
+		wndprocCallback = windows.NewCallback(wndproc)
+		wc := w32.WndClassExW{
+			CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
+			HInstance:     hinstance,
+			LpszClassName: className,
+			HIcon:         windows.Handle(icon),
+			HIconSm:       windows.Handle(icon),
+			HbrBackground: windows.Handle(edge.ThemeBrush(isDark)),
+			LpfnWndProc:   wndprocCallback,
+		}
+		_, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	})
 
 	windowName, _ := windows.UTF16PtrFromString(opts.Title)
 
@@ -447,24 +495,30 @@ func (w *webview) createWithOptionsE(opts WindowOptions) error {
 		windowHeight = 480
 	}
 
+	var posX, posY uintptr
 	var targetX, targetY int
 	if opts.Center {
+		// get screen size
 		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
 		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
+		// calculate window position
 		targetX = (int(screenWidth) - int(windowWidth)) / 2
 		targetY = (int(screenHeight) - int(windowHeight)) / 2
+		posX = uintptr(int32(targetX))
+		posY = uintptr(int32(targetY))
 	} else {
-		targetX = 100
-		targetY = 100
+		// use default position
+		posX = w32.CW_USEDEFAULT
+		posY = w32.CW_USEDEFAULT
 	}
 
-	w.hwnd, _, _ = w32.User32CreateWindowExW.Call(
+	hwnd, _, createErr := w32.User32CreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
 		0xCF0000, // WS_OVERLAPPEDWINDOW
-		uintptr(int32(targetX)),
-		uintptr(int32(targetY)),
+		posX,
+		posY,
 		uintptr(windowWidth),
 		uintptr(windowHeight),
 		0,
@@ -472,18 +526,23 @@ func (w *webview) createWithOptionsE(opts WindowOptions) error {
 		uintptr(hinstance),
 		0,
 	)
+	if hwnd == 0 {
+		return fmt.Errorf("CreateWindowExW failed: %w", createErr)
+	}
+	atomic.StoreUintptr(&w.hwnd, hwnd)
 
-	setWindowContext(w.hwnd, w)
-	edge.ApplyTheme(w.hwnd, isDark)
+	setWindowContext(hwnd, w)
+	edge.ApplyWindowTheme(hwnd, isDark)
 
-	if err := w.browser.EmbedWithError(w.hwnd); err != nil {
-		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
-		setWindowContext(w.hwnd, nil)
-		w.hwnd = 0
+	if err := w.browser.EmbedErr(hwnd); err != nil {
+		setWindowContext(hwnd, nil)
+		w.browser.Close()
+		_, _, _ = w32.User32DestroyWindow.Call(hwnd)
+		atomic.StoreUintptr(&w.hwnd, 0)
 		return err
 	}
 
-	w.showWindowAtFront(targetX, targetY, int(windowWidth), int(windowHeight))
+	w.showWindowAtFront(targetX, targetY, int(windowWidth), int(windowHeight), opts.Center)
 
 	return nil
 }
@@ -494,26 +553,31 @@ func (w *webview) SetProcessFailedHandler(handler func(event ProcessFailedEvent)
 	w.processFailedHandler = handler
 }
 
-func (w *webview) showWindowAtFront(x, y, width, height int) {
-	if w.hwnd == 0 {
+func (w *webview) showWindowAtFront(x, y, width, height int, move bool) {
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	if hwnd == 0 {
 		return
 	}
 
+	flags := uintptr(w32.SWPFrameChanged | w32.SWPNoActivate)
+	if !move {
+		flags |= w32.SWPNoMove | w32.SWPNoSize
+	}
 	_, _, _ = w32.User32SetWindowPos.Call(
-		w.hwnd, w32.HWNDTopMost,
+		hwnd, w32.HWNDTopMost,
 		uintptr(int32(x)), uintptr(int32(y)),
 		uintptr(width), uintptr(height),
-		w32.SWPFrameChanged|w32.SWPNoActivate,
+		flags,
 	)
-	_, _, _ = w32.User32ShowWindow.Call(w.hwnd, w32.SWShow)
+	_, _, _ = w32.User32ShowWindow.Call(hwnd, w32.SWShow)
 
 	_ = w.browser.Show()
 	w.browser.Resize()
 	_ = w.browser.NotifyParentWindowPositionChanged()
-	_, _, _ = w32.User32UpdateWindow.Call(w.hwnd)
+	_, _, _ = w32.User32UpdateWindow.Call(hwnd)
 
 	_, _, _ = w32.User32SetWindowPos.Call(
-		w.hwnd, w32.HWNDNoTopMost,
+		hwnd, w32.HWNDNoTopMost,
 		0, 0, 0, 0,
 		w32.SWPNoMove|w32.SWPNoSize|w32.SWPNoActivate,
 	)
@@ -522,43 +586,56 @@ func (w *webview) showWindowAtFront(x, y, width, height int) {
 		return
 	}
 
-	_, _, _ = w32.User32BringWindowToTop.Call(w.hwnd)
-	if ret, _, _ := w32.User32SetForegroundWindow.Call(w.hwnd); ret == 0 {
+	_, _, _ = w32.User32BringWindowToTop.Call(hwnd)
+	if ret, _, _ := w32.User32SetForegroundWindow.Call(hwnd); ret == 0 {
 		fgHwnd, _, _ := w32.User32GetForegroundWindow.Call()
-		if fgHwnd != 0 && fgHwnd != w.hwnd {
+		if fgHwnd != 0 && fgHwnd != hwnd {
 			fgTid, _, _ := w32.User32GetWindowThreadProcessId.Call(fgHwnd, 0)
 			if fgTid != 0 && fgTid != w.mainthread {
 				if attached, _, _ := w32.User32AttachThreadInput.Call(w.mainthread, fgTid, 1); attached != 0 {
-					_, _, _ = w32.User32BringWindowToTop.Call(w.hwnd)
-					_, _, _ = w32.User32SetForegroundWindow.Call(w.hwnd)
+					_, _, _ = w32.User32BringWindowToTop.Call(hwnd)
+					_, _, _ = w32.User32SetForegroundWindow.Call(hwnd)
 					_, _, _ = w32.User32AttachThreadInput.Call(w.mainthread, fgTid, 0)
 				}
 			}
 		}
 	}
 
-	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
+	_, _, _ = w32.User32SetFocus.Call(hwnd)
 	w.browser.Focus()
 }
 
 func (w *webview) Destroy() {
-	if w.hwnd == 0 {
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	if hwnd == 0 {
 		return
 	}
-	_, _, _ = w32.User32PostMessageW.Call(w.hwnd, w32.WMClose, 0, 0)
+	_, _, _ = w32.User32PostMessageW.Call(hwnd, w32.WMClose, 0, 0)
 }
 
 func (w *webview) Run() {
-	defer runtime.UnlockOSThread()
+	defer func() {
+		if w.browser != nil {
+			w.browser.Close()
+		}
+		if w.comInited {
+			_, _, _ = w32.Ole32CoUninitialize.Call()
+			w.comInited = false
+		}
+		runtime.UnlockOSThread()
+	}()
 
 	var msg w32.Msg
 	for {
-		_, _, _ = w32.User32GetMessageW.Call(
+		r, _, _ := w32.User32GetMessageW.Call(
 			uintptr(unsafe.Pointer(&msg)),
 			0,
 			0,
 			0,
 		)
+		if int32(r) <= 0 {
+			return
+		}
 		if msg.Message == w32.WMApp {
 			w.m.Lock()
 			q := append([]func(){}, w.dispatchq...)
@@ -567,10 +644,9 @@ func (w *webview) Run() {
 			for _, v := range q {
 				v()
 			}
-		} else if msg.Message == w32.WMQuit {
-			return
+			continue
 		}
-		r, _, _ := w32.User32GetAncestor.Call(uintptr(msg.Hwnd), w32.GARoot)
+		r, _, _ = w32.User32GetAncestor.Call(uintptr(msg.Hwnd), w32.GARoot)
 		r, _, _ = w32.User32IsDialogMessage.Call(r, uintptr(unsafe.Pointer(&msg)))
 		if r != 0 {
 			continue
@@ -585,7 +661,8 @@ func (w *webview) Terminate() {
 }
 
 func (w *webview) Window() unsafe.Pointer {
-	return *(*unsafe.Pointer)(unsafe.Pointer(&w.hwnd))
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	return *(*unsafe.Pointer)(unsafe.Pointer(&hwnd))
 }
 
 func (w *webview) Navigate(url string) {
@@ -597,22 +674,30 @@ func (w *webview) SetHtml(html string) {
 }
 
 func (w *webview) SetTitle(title string) {
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	if hwnd == 0 {
+		return
+	}
 	_title, err := windows.UTF16FromString(title)
 	if err != nil {
 		_title, _ = windows.UTF16FromString("")
 	}
-	_, _, _ = w32.User32SetWindowTextW.Call(w.hwnd, uintptr(unsafe.Pointer(&_title[0])))
+	_, _, _ = w32.User32SetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&_title[0])))
 }
 
 func (w *webview) SetSize(width int, height int, hints Hint) {
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	if hwnd == 0 {
+		return
+	}
 	index := w32.GWLStyle
-	style := w32.GetWindowLong(w.hwnd, index)
+	style := w32.GetWindowLong(hwnd, index)
 	if hints == HintFixed {
 		style &^= (w32.WSThickFrame | w32.WSMaximizeBox)
 	} else {
 		style |= (w32.WSThickFrame | w32.WSMaximizeBox)
 	}
-	w32.SetWindowLong(w.hwnd, index, style)
+	w32.SetWindowLong(hwnd, index, style)
 
 	if hints == HintMax {
 		w.maxsz.X = int32(width)
@@ -628,7 +713,7 @@ func (w *webview) SetSize(width int, height int, hints Hint) {
 		r.Bottom = int32(height)
 		_, _, _ = w32.User32AdjustWindowRect.Call(uintptr(unsafe.Pointer(&r)), w32.WSOverlappedWindow, 0)
 		_, _, _ = w32.User32SetWindowPos.Call(
-			w.hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top),
+			hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top),
 			w32.SWPNoZOrder|w32.SWPNoActivate|w32.SWPNoMove|w32.SWPFrameChanged)
 		w.browser.Resize()
 	}

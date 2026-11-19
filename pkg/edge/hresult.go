@@ -24,6 +24,9 @@ func (e *HRESULTError) Error() string {
 		return fmt.Sprintf("webview2 %s failed (HRESULT 0x%08X: %s)", e.Stage, e.Code, e.Message)
 	}
 	if e.Err != nil {
+		if e.Code == 0 {
+			return fmt.Sprintf("webview2 %s failed: %v", e.Stage, e.Err)
+		}
 		return fmt.Sprintf("webview2 %s failed (HRESULT 0x%08X: %v)", e.Stage, e.Code, e.Err)
 	}
 	return fmt.Sprintf("webview2 %s failed (HRESULT 0x%08X)", e.Stage, e.Code)
