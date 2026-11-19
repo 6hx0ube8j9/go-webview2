@@ -441,6 +441,46 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 	return r
 }
 
+func centerOnCursorMonitor(width, height int) (int, int, bool) {
+	var pt w32.Point
+	if ret, _, _ := w32.User32GetCursorPos.Call(uintptr(unsafe.Pointer(&pt))); ret == 0 {
+		return 0, 0, false
+	}
+
+	r := w32.Rect{
+		Left:   pt.X,
+		Top:    pt.Y,
+		Right:  pt.X + 1,
+		Bottom: pt.Y + 1,
+	}
+	hMonitor, _, _ := w32.User32MonitorFromRect.Call(uintptr(unsafe.Pointer(&r)), w32.MonitorDefaultToNearest)
+	if hMonitor == 0 {
+		return 0, 0, false
+	}
+
+	var mi w32.MonitorInfo
+	mi.CbSize = uint32(unsafe.Sizeof(mi))
+	if ret, _, _ := w32.User32GetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi))); ret == 0 {
+		return 0, 0, false
+	}
+
+	workW := int(mi.RcWork.Right - mi.RcWork.Left)
+	workH := int(mi.RcWork.Bottom - mi.RcWork.Top)
+	if workW <= 0 || workH <= 0 {
+		return 0, 0, false
+	}
+
+	x := int(mi.RcWork.Left) + (workW-width)/2
+	y := int(mi.RcWork.Top) + (workH-height)/2
+	if x < int(mi.RcWork.Left) {
+		x = int(mi.RcWork.Left)
+	}
+	if y < int(mi.RcWork.Top) {
+		y = int(mi.RcWork.Top)
+	}
+	return x, y, true
+}
+
 func (w *webview) Create(debug bool, window unsafe.Pointer) bool {
 	// This function signature stopped making sense a long time ago.
 	// It is but legacy cruft at this point.
@@ -498,12 +538,14 @@ func (w *webview) createWithOptionsErr(opts WindowOptions) error {
 	var posX, posY uintptr
 	var targetX, targetY int
 	if opts.Center {
-		// get screen size
-		screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
-		screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
-		// calculate window position
-		targetX = (int(screenWidth) - int(windowWidth)) / 2
-		targetY = (int(screenHeight) - int(windowHeight)) / 2
+		var ok bool
+		if targetX, targetY, ok = centerOnCursorMonitor(int(windowWidth), int(windowHeight)); !ok {
+			// fallback to primary screen size
+			screenWidth, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CXSCREEN)
+			screenHeight, _, _ := w32.User32GetSystemMetrics.Call(w32.SM_CYSCREEN)
+			targetX = (int(screenWidth) - int(windowWidth)) / 2
+			targetY = (int(screenHeight) - int(windowHeight)) / 2
+		}
 		posX = uintptr(int32(targetX))
 		posY = uintptr(int32(targetY))
 	} else {

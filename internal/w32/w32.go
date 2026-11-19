@@ -23,6 +23,9 @@ var (
 	user32                         = windows.NewLazySystemDLL("user32")
 	User32LoadImageW               = user32.NewProc("LoadImageW")
 	User32GetSystemMetrics         = user32.NewProc("GetSystemMetrics")
+	User32GetCursorPos             = user32.NewProc("GetCursorPos")
+	User32MonitorFromRect          = user32.NewProc("MonitorFromRect")
+	User32GetMonitorInfoW          = user32.NewProc("GetMonitorInfoW")
 	User32RegisterClassExW         = user32.NewProc("RegisterClassExW")
 	User32CreateWindowExW          = user32.NewProc("CreateWindowExW")
 	User32DestroyWindow            = user32.NewProc("DestroyWindow")
@@ -60,6 +63,10 @@ var (
 const (
 	SM_CXSCREEN = 0
 	SM_CYSCREEN = 1
+)
+
+const (
+	MonitorDefaultToNearest = 2
 )
 
 const (
@@ -163,6 +170,13 @@ type Rect struct {
 	Top    int32
 	Right  int32
 	Bottom int32
+}
+
+type MonitorInfo struct {
+	CbSize    uint32
+	RcMonitor Rect
+	RcWork    Rect
+	DwFlags   uint32
 }
 
 type MinMaxInfo struct {
