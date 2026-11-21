@@ -132,7 +132,7 @@ func NewWithOptionsErr(options WebViewOptions) (WebView, error) {
 	const coinitApartmentThreaded = 2
 	hr, _, _ := w32.Ole32CoInitializeEx.Call(0, coinitApartmentThreaded)
 	// S_OK (0) or S_FALSE (1) increments the thread's COM init count and must be paired with CoUninitialize.
-	comInited := hr == 0 || hr == 1
+	comInited := uint32(hr) == 0 || uint32(hr) == 1
 
 	w := &webview{
 		bindings:  map[string]interface{}{},
@@ -333,15 +333,33 @@ func (w *webview) callbinding(d rpcMessage) (interface{}, error) {
 
 func (w *webview) SetDarkMode(isDark bool) {
 	w.Dispatch(func() {
+		hwnd := atomic.LoadUintptr(&w.hwnd)
+		if hwnd == 0 {
+			return
+		}
 		w.customDarkMode = true
 		w.darkMode = isDark
-		if hwnd := atomic.LoadUintptr(&w.hwnd); hwnd != 0 {
-			edge.ApplyWindowTheme(hwnd, isDark)
-		}
+		edge.ApplyWindowTheme(hwnd, isDark)
 		if w.browser != nil {
 			w.browser.SetDarkMode(isDark)
 		}
 	})
+}
+
+func (w *webview) flushDispatchQueue() {
+	for {
+		w.m.Lock()
+		if len(w.dispatchq) == 0 {
+			w.m.Unlock()
+			return
+		}
+		q := w.dispatchq
+		w.dispatchq = nil
+		w.m.Unlock()
+		for _, v := range q {
+			v()
+		}
+	}
 }
 
 func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
@@ -411,10 +429,17 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 		case w32.WMClose:
 			_, _, _ = w32.User32DestroyWindow.Call(hwnd)
 			return 0
+			
+		case w32.WMApp:
+			w.flushDispatchQueue()
+			return 0
 
 		case w32.WMDestroy:
 			setWindowContext(hwnd, nil)
 			atomic.StoreUintptr(&w.hwnd, 0)
+			w.m.Lock()
+			w.dispatchq = nil
+			w.m.Unlock()
 			if w.browser != nil {
 				w.browser.Close()
 			}
@@ -505,7 +530,7 @@ func (w *webview) createWithOptionsErr(opts WindowOptions) error {
 			// load default icon
 			icow, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCxIcon)
 			icoh, _, _ := w32.User32GetSystemMetrics.Call(w32.SystemMetricsCyIcon)
-			icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), 32512, icow, icoh, 0)
+			icon, _, _ = w32.User32LoadImageW.Call(0, 32512, 1, icow, icoh, w32.LR_SHARED)
 		} else {
 			// load icon from resource
 			icon, _, _ = w32.User32LoadImageW.Call(uintptr(hinstance), uintptr(opts.IconId), 1, 0, 0, w32.LR_DEFAULTSIZE|w32.LR_SHARED)
@@ -678,16 +703,7 @@ func (w *webview) Run() {
 		if int32(r) <= 0 {
 			return
 		}
-		if msg.Message == w32.WMApp {
-			w.m.Lock()
-			q := append([]func(){}, w.dispatchq...)
-			w.dispatchq = []func(){}
-			w.m.Unlock()
-			for _, v := range q {
-				v()
-			}
-			continue
-		}
+
 		r, _, _ = w32.User32GetAncestor.Call(uintptr(msg.Hwnd), w32.GARoot)
 		r, _, _ = w32.User32IsDialogMessage.Call(r, uintptr(unsafe.Pointer(&msg)))
 		if r != 0 {
@@ -770,10 +786,14 @@ func (w *webview) Eval(js string) {
 }
 
 func (w *webview) Dispatch(f func()) {
+	hwnd := atomic.LoadUintptr(&w.hwnd)
+	if hwnd == 0 {
+		return
+	}
 	w.m.Lock()
 	w.dispatchq = append(w.dispatchq, f)
 	w.m.Unlock()
-	_, _, _ = w32.User32PostThreadMessageW.Call(w.mainthread, w32.WMApp, 0, 0)
+	_, _, _ = w32.User32PostMessageW.Call(hwnd, w32.WMApp, 0, 0)
 }
 
 func (w *webview) Bind(name string, f interface{}) error {
